@@ -32,12 +32,24 @@ module FindMatchedPattern(G:Graph.Graph) =
     let find_matched_pattern q g =
 
       let is_compatible m n =
-        failwith"TODO"
+        true (* Temporairement *)
       in
 
       let fsyn s matched_q succs_q preds_q m n =
-        failwith "TODO"
+        G.NodeSet.for_all 
       in
+
+      let create_new_state m n tmp_s =
+        let new_matching_peers = NodeMap.add m n tmp_s.matching_peers in
+        let new_matched_g = G.NodeSet.add n tmp_s.matched_g in
+        let new_succs_g = G.NodeSet.union tmp_s.succs_g (G.NodeSet.diff (G.succs g n) new_matched_g) in
+        let new_preds_g = G.NodeSet.union tmp_s.preds_g (G.NodeSet.diff (G.preds g n) new_matched_g) in
+        { matching_peers = new_matching_peers;
+          matched_g = new_matched_g;
+          succs_g = new_succs_g;
+          preds_g = new_preds_g;
+        }
+        
         
 
       let rec partial_match m (ls, matched_q, succs_q, preds_q) =
@@ -45,7 +57,37 @@ module FindMatchedPattern(G:Graph.Graph) =
         else let tmp_succs_q = G.NodeSet.remove m succs_q in
              let acc1 =
                List.fold_left
-                 (fun acc state -> failwith "TODO"
+                 (fun acc s ->
+                   G.NodeSet.fold
+                     (fun n aux_acc ->
+                       if not (is_compatible m n) then acc
+                       else let tmp_s = {s with succs_g = G.NodeSet.remove n s.succs_g;} in
+                            if not fsyn tmp_s matched_q tmp_succs_q preds_q m n then aux_acc
+                            else let new_s = create_new_state m n tmp_s in
+                                 new_s::aux_acc)
+                     s.succs_g acc)
+                 [] ls in
+             let acc2 =
+               List.fold_left
+                 (fun acc s ->
+                   G.NodeSet.fold
+                     (fun n aux_acc ->
+                       if not (is_compatible m n) then acc
+                       else let tmp_s = {s with preds_g = G.NodeSet.remove n s.preds_g;} in
+                            if not fsyn tmp_s matched_q succs_q tmp_preds_q m n then aux_acc
+                            else let new_s = create_new_state m n tmp_s in
+                                 new_s::aux_acc)
+                     s.succs_g acc)
+                 [] ls in
+             let new_matched_q = G.NodeSet.add m matched_q in
+             let new_succs_q = G.NodeSet.union succs_q (G.NodeSet.diff (G.succs q m) new_matched_q) in
+             let new_preds_q = G.NodeSet.union preds_q (G.NodeSet.diff (G.preds q m) new_matched_q) in
+             G.NodeSet.fold
+               partial_match
+               (G.NodeSet.union new_succs_q new_preds_q)
+               (acc2, new_matched_q, new_succs_q, new_preds_q)
+                                 
+                                            
                           
       
       if G.is_empty q then ResultSet.empty
