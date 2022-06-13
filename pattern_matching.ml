@@ -24,6 +24,11 @@ module FindMatchedPattern(G:Graph.Graph) =
         succs_g : G.NodeSet.t;
         preds_g : G.NodeSet.t
       }
+
+    let reverse_find value map =
+      match NodeMap.fold (fun k v acc -> if v = value then Some k else acc) map None with
+      | Some k -> k
+      | None -> failwith "This case is not going to happen"
     
     (*
       @requires None
@@ -36,7 +41,35 @@ module FindMatchedPattern(G:Graph.Graph) =
       in
 
       let fsyn s matched_q succs_q preds_q m n =
-        G.NodeSet.for_all 
+        let matched_preds_m = G.NodeSet.inter matched_q (G.preds q m) in
+        let matched_preds_n = G.NodeSet.inter s.matched_g (G.preds g n) in
+        G.NodeSet.for_all
+          (fun m' -> G.NodeSet.mem (NodeMap.find m' s.matching_peers) matched_preds_n)
+          matching_preds_m
+        &&
+          G.NodeSet.for_all
+            (fun n' -> G.NodeSet.mem (reverse_find n' s.matching_peers) matched_preds_m)
+            matching_preds_n
+        &&
+          let matched_succs_m = G.NodeSet.inter matched_q (G.succs q m) in
+          let matched_succs_n = G.NodeSet.inter s.matched_g (G.succs g n) in
+          G.NodeSet.for_all
+            (fun m' -> G.NodeSet.mem (NodeMap.find m' s.matching_peers) matched_succs_n)
+            matching_succs_m
+          &&
+            G.NodeSet.for_all
+              (fun n' -> G.NodeSet.mem (reverse_find n' s.matching_peers) matched_succs_m)
+              matching_succs_n
+          
+          &&
+
+            let neighbours_preds_m = G.NodeSet.inter preds_q (G.preds q m) in
+            let neighbours_preds_n = G.NodeSet.inter s.preds_g (G.preds g n) in
+            G.NodeSet.cardinal neighbours_preds_m <= G.NodeSet.cardinal neighbours_preds_n
+            &&
+              let neighbours_succs_m = G.NodeSet.inter succs_q (G.succs q m) in
+              let neighbours_succs_n = G.NodeSet.inter s.succs_g (G.succs g n) in
+              G.NodeSet.cardinal neighbours_succs_m <= G.NodeSet.cardinal neighbours_succs_n
       in
 
       let create_new_state m n tmp_s =
