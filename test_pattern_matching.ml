@@ -45,6 +45,6 @@ let g = FMPInt.GType.add_edge edgeg8
                                FMPInt.GType.empty
           )))))))
 
-let result = FMPInt.find_matched_pattern q g;
+let result = FMPInt.find_matched_pattern q g;;
 
 FMPInt.print_result result;;

@@ -9,7 +9,7 @@ module type FindMatchedPattern =
 
     val find_matched_pattern : GType.graph -> GType.graph -> ResultSet.t
 
-    val print_result : Matching.t -> unit
+    val print_result : ResultSet.t -> unit
   end
   
 
