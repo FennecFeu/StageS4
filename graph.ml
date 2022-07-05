@@ -81,6 +81,16 @@ module type Graph =
      *)
     val fold_node : ('a -> node -> 'a) -> 'a -> graph -> 'a
 
+    (*
+      @requires The node is in the graph
+      @ensures Returns the incidence number of the node in the graph.
+     *)
+    val incidence_number : graph -> node -> int
+
+    (*
+      @requires None
+      @ensures Print the given node in the console
+     *)
     val print_node : node -> unit
       
   end
@@ -153,6 +163,9 @@ module MakeGraph(E:Edge.Edge) =
 
     let get_edge g u v =
       EdgeMap.find (u, v) g.edges
+
+    let incidence_number g v =
+      (NodeSet.cardinal (NodeMap.find v g.preds)) + (NodeSet.cardinal (NodeMap.find v g.succs))
 
     let fold_node f acc g =
       let f2 k _ accm = f accm k in

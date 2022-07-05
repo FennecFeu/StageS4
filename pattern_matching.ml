@@ -69,7 +69,7 @@ module MakeFindMatchedPattern(G:Graph.Graph) =
         @ensures Returns true if the atom a is compatible with the node n. If not, returns false
        *)
       let is_compatible_node n a =
-        true (* Temporarily *)
+        (G.incidence_number q n <= G.incidence_number g a) && true (* Temporarily *)
       in
 
       (*

@@ -81,6 +81,16 @@ module type Graph =
      *)
     val fold_node : ('a -> node -> 'a) -> 'a -> graph -> 'a
 
+    (*
+      @requires The node is in the graph
+      @ensures Returns the incidence number of the node in the graph.
+     *)
+    val incidence_number : graph -> node -> int
+
+    (*
+      @requires None
+      @ensures Print the given node in the console
+     *)
     val print_node : node -> unit
       
   end
