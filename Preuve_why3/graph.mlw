@@ -1,0 +1,73 @@
+module Graph
+  
+  use int.Int
+  use export set.Fset
+
+  (* The type related to the edges of the graph *)
+  type edge
+
+  (* The type related to the vertices of the graph *)
+  type vertex
+
+  (* The set containing all the vertices of the graph *)
+  constant vertices : fset vertex
+
+  (* The set containing all the edges of the graph *)
+  constant edges : fset edge
+  
+  (* Function to get all the successors of the vertex in the graph *)
+  function successors vertex : fset vertex
+  
+  (* Function to get all the predecessors of the vertex in the graph *)
+  function predecessors vertex : fset vertex
+  
+  (* The successors of a vertex in the graph are all vertices in the graph *)
+  axiom successors_vertices:
+    forall x. mem x vertices -> subset (successors x) vertices
+    
+  (* The predecessors of a vertex in the graph are all vertices in the graph *)
+  axiom predecessors_vertices:
+    forall x. mem x vertices -> subset (predecessors x) vertices
+    
+  (* Predecessors and successors are linked and consistent *)
+  axiom equiv_preds_and_succs:
+    forall x y. mem y (successors x) <-> mem x (predecessors y)
+  
+  (* Function to get an edge from the two nodes at its extremities *)
+  function get_edge vertex vertex : edge
+  
+  (* Edges have vertices at their extremities that all belong to the graph *)
+  axiom get_edge_edges:
+    forall x y. mem (get_edge x y) edges -> mem x vertices /\ mem y vertices
+    
+  (* Edges imply a successor for a vertex in the graph *)
+  axiom get_edge_succs:
+    forall x y. mem (get_edge x y) edges -> mem y (successors x)
+    
+  (* Predicate to make the clone export *)
+  predicate edge_exists (x y: vertex) = mem (get_edge x y) edges
+
+  clone export graph.Path with type vertex = vertex, predicate edge = edge_exists
+  
+  predicate (<<) (x y: vertex)
+  
+  constant min_vertex : vertex
+  
+  axiom vertex_min_vertex :
+    mem min_vertex vertices
+  
+  axiom minimum_min_vertex :
+    forall x. mem x vertices -> min_vertex << x
+    
+  (*
+    @requires None
+    @ensures Given the operation and a graph, returns from an entry a modified value after calling the operation on all the nodes of the graph.
+   *)
+  (*val fold_vertices : ('a -> vertex -> 'a) -> 'a -> 'a*)
+  
+  function incidence_number vertex : int
+  
+  axiom incidence_number_cardinal :
+    forall x. mem x vertices -> incidence_number x = cardinal (successors x) + cardinal (predecessors x)
+    
+end
