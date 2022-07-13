@@ -1,3 +1,4 @@
+(*
 module Graph
   
   use int.Int
@@ -63,11 +64,127 @@ module Graph
     @requires None
     @ensures Given the operation and a graph, returns from an entry a modified value after calling the operation on all the nodes of the graph.
    *)
-  (*val fold_vertices : ('a -> vertex -> 'a) -> 'a -> 'a*)
+  (* type ('a) fold_vertices = ('a -> vertex -> 'a) -> 'a -> 'a *)
   
   function incidence_number vertex : int
   
   axiom incidence_number_cardinal :
     forall x. mem x vertices -> incidence_number x = cardinal (successors x) + cardinal (predecessors x)
+end *)
+
+
+module Graph
+  
+  use int.Int
+  use export set.SetApp
+
+  (* The type related to the edges of the graph *)
+  type edge
+  (* The type related to the vertices of the graph *)
+  type vertex
+
+  (* The set containing all the vertices of the data graph *)
+  constant atoms : fset vertex
+  (* The set containing all the vertices of the query graph *)
+  constant nodes : fset vertex
+
+  (* The set containing all the edges of the data graph *)
+  constant bridges : fset edge
+  (* The set containing all the edges of the query graph *)
+  constant links : fset edge
+  
+  (* Function to get all the successors of the vertex in the graph *)
+  function successors vertex : fset vertex
+  
+  (* Function to get all the predecessors of the vertex in the graph *)
+  function predecessors vertex : fset vertex
+  
+  (* The successors of a vertex in the data graph are all vertices in the data graph *)
+  axiom successors_atoms:
+    forall x. mem x atoms -> subset (successors x) atoms
+  (* The successors of a vertex in the query graph are all vertices in the query graph *)
+  axiom successors_nodes:
+    forall x. mem x nodes -> subset (successors x) nodes
+    
+  (* The predecessors of a vertex in the data graph are all vertices in the data graph *)
+  axiom predecessors_atoms:
+    forall x. mem x atoms -> subset (predecessors x) atoms
+  (* The predecessors of a vertex in the query graph are all vertices in the query graph *)
+  axiom predecessors_nodes:
+    forall x. mem x nodes -> subset (predecessors x) nodes
+    
+  (* Predecessors and successors are linked and consistent *)
+  axiom equiv_preds_and_succs:
+    forall x y. mem y (successors x) <-> mem x (predecessors y)
+  
+  (* Function to get an edge from the two nodes at its extremities *)
+  function get_edge vertex vertex : edge
+  
+  (* Edges have vertices at their extremities that all belong to their graph *)
+  axiom get_edge_bridges:
+    forall x y. mem (get_edge x y) bridges -> mem x atoms /\ mem y atoms
+  axiom get_edge_links:
+    forall x y. mem (get_edge x y) links -> mem x nodes /\ mem y nodes
+    
+  (* Predicate to make the clone export *)
+  predicate edge_exists (x y: vertex) = mem (get_edge x y) (union bridges links)
+
+  clone export graph.Path with type vertex = vertex, predicate edge = edge_exists
+    
+  (* Edges imply a successor for a vertex in the graph *)
+  axiom get_edge_succs:
+    forall x y. edge_exists x y -> mem y (successors x)
+  
+  (* Order relation *)
+  predicate (<<) (x y: vertex)
+  (* The minimum of the order relation *)
+  constant min_node : vertex
+  
+  (* The minimum has to be among the nodes *)
+  axiom node_min_node :
+    mem min_node nodes
+  
+  (* The minimum is lesser than all the nodes *)
+  axiom minimum_min_node :
+    forall x. mem x nodes -> min_node << x
+  
+  function incidence_number vertex : int
+  
+  axiom incidence_number_cardinal :
+    forall x. mem x (union nodes atoms) -> incidence_number x = cardinal (successors x) + cardinal (predecessors x)
+    
+    (*
+  let incidence2_number (n: vertex) : int
+  =
+    cardinal (successors n) + cardinal (predecessors n)*)
+end
+    
+  
+    
+module AlgoGraph
+  use int.Int
+  use Graph
+
+  (* In order to build result *)
+  clone export fmap.MapApp with type key = vertex
+  
+  (* Elements in the result set *)
+  type matching = t vertex
+  
+  (* Predicate to say two vertices are similar *)
+  let is_compatible_vertex (n a: vertex) : bool
+  =
+    (incidence_number n <= incidence_number a) && true (* Temporarily *)
+  
+  (* To associate a node and an atom in a matching with one element *)
+  let start_matching (n a: vertex) : matching
+  =
+    add n a (create ())
+  
+  (* THE ALMIGHTY ALGORITM *)
+  let find_matched_pattern () : fset matching
+  =
+    if is_empty atoms then empty
+    else let all_starts = map start_matching (filter atoms (is_compatible_vertex min_node)) in
     
 end
