@@ -72,50 +72,109 @@ module Graph
     forall x. mem x vertices -> incidence_number x = cardinal (successors x) + cardinal (predecessors x)
 end *)
 
+module Vertex
+
+  (* The type related to the vertices of the graph *)
+  type vertex
+
+  clone export set.SetApp with type elt = vertex
+  
+  (* Predicate on vertex that belongs to the set or not *)
+  predicate vertex_in (x: vertex) (s: fset vertex) = mem x s
+end
+
+module Edge
+
+  use Vertex
+
+  (* The type related to the elements in an edge *)
+  type edge_elt
+  (* The type related to the edges of the graph *)
+  type edge = (vertex, edge_elt, vertex)
+  
+  (* Function to get an edge_elt from an edge *)
+  let function get_edge_elt edge : edge_elt
+  =
+  
+    let (_, elt, _) = edge in
+    elt
+  
+  (* Function to get the first vertex from an edge *)
+  let function get_edge_pred edge : edge_elt
+  =
+    let (pred, _, _) = edge in
+    pred
+    
+  (* Function to get the first vertex from an edge *)
+  let function get_edge_succ edge : edge_elt
+  =
+    let (_, _, succ) = edge in
+    succ
+  
+  clone export set.SetApp with type elt = edge
+  
+end
+  
 
 module Graph
   
   use int.Int
-  use export set.SetApp
+  use Vertex
+  use Edge
+  
+  clone export fmap.MapApp with type key = vertex
+  
+  (* The type of the successors and predecessors map in the graph *)
+  type linked = t Vertex.set
+  
+  (* The type related to the graph *)
+  type graph = {vertices : Vertex.set;
+                preds : linked;
+                succs : linked;
+                edges : Edge.set; }
+  invariant {forall v. Vertex.mem v vertices -> mem v preds} (*  *)
+  invariant {forall v. Vertex.mem v vertices -> mem v succs}
+  invariant {forall v. mem v preds -> subset (find v preds) vertices}
+  invariant {forall v. mem v succs -> subset (find v succs) vertices}
+  invariant {forall v w. Vertex.mem v vertices -> (vertex_in w (find v succs) <-> vertex_in v (find w preds))}
+  invariant {forall e. Edge.mem e edges -> let (pred, _, succ) = e in vertex_in succ (find pred succs)}
+  by {vertices = Vertex.empty(); preds = create(); succs = create(); edges = empty()}
 
-  (* The type related to the edges of the graph *)
-  type edge
-  (* The type related to the vertices of the graph *)
-  type vertex
-
+  (*
   (* The set containing all the vertices of the data graph *)
-  constant atoms : fset vertex
+  constant atoms : Vertex.set
   (* The set containing all the vertices of the query graph *)
-  constant nodes : fset vertex
-
+  constant nodes : Vertex.set
+  
+  (* Nodes and atoms are two separate sets *)
+  axiom inter_set_vertex_empty:
+    disjoint atoms nodes
+    
   (* The set containing all the edges of the data graph *)
-  constant bridges : fset edge
+  constant bridges : Edge.set
   (* The set containing all the edges of the query graph *)
-  constant links : fset edge
+  constant links : Edge.set
+  
+  (* Bridges and links are two separate sets *)
+  axiom inter_set_edge_empty:
+    disjoint bridges links
+    *)
   
   (* Function to get all the successors of the vertex in the graph *)
-  function successors vertex : fset vertex
+  let function successors (v: vertex) (g: graph) : Vertex.set
+  requires {vertex_in v g.vertices}
+  ensures  {result = find v g.succs}
+  =
+    find v g.succs
   
   (* Function to get all the predecessors of the vertex in the graph *)
-  function predecessors vertex : fset vertex
-  
-  (* The successors of a vertex in the data graph are all vertices in the data graph *)
-  axiom successors_atoms:
-    forall x. mem x atoms -> subset (successors x) atoms
-  (* The successors of a vertex in the query graph are all vertices in the query graph *)
-  axiom successors_nodes:
-    forall x. mem x nodes -> subset (successors x) nodes
+  let function predecessors (v: vertex) (g: graph) : Vertex.set
+  requires {vertex_in v g.vertices}
+  ensures  {result = find v g.preds}
+  =
+    find v g.preds
     
-  (* The predecessors of a vertex in the data graph are all vertices in the data graph *)
-  axiom predecessors_atoms:
-    forall x. mem x atoms -> subset (predecessors x) atoms
-  (* The predecessors of a vertex in the query graph are all vertices in the query graph *)
-  axiom predecessors_nodes:
-    forall x. mem x nodes -> subset (predecessors x) nodes
-    
-  (* Predecessors and successors are linked and consistent *)
-  axiom equiv_preds_and_succs:
-    forall x y. mem y (successors x) <-> mem x (predecessors y)
+  (*
   
   (* Function to get an edge from the two nodes at its extremities *)
   function get_edge vertex vertex : edge
@@ -153,16 +212,19 @@ module Graph
   axiom incidence_number_cardinal :
     forall x. mem x (union nodes atoms) -> incidence_number x = cardinal (successors x) + cardinal (predecessors x)
     
-    (*
+  (*
   let incidence2_number (n: vertex) : int
   =
-    cardinal (successors n) + cardinal (predecessors n)*)
+    cardinal (successors n) + cardinal (predecessors n)
+    *)
+    
+    *)
 end
     
-  
-    
-module AlgoGraph
-  use int.Int
+module Matching
+
+  use Vertex
+  use Edge
   use Graph
 
   (* In order to build result *)
@@ -171,20 +233,48 @@ module AlgoGraph
   (* Elements in the result set *)
   type matching = t vertex
   
+end
+
+(*
+    
+module AlgoGraph
+  use int.Int
+  use Vertex
+  use Edge
+  use Graph
+  use Matching
+  
+  clone export set.SetApp with type elt = matching
+  
   (* Predicate to say two vertices are similar *)
-  let is_compatible_vertex (n a: vertex) : bool
+  let function is_compatible_vertex (n a: vertex) : bool
+    requires {vertex_in a atoms}
+    requires {vertex_in n nodes}
+    ensures  {result = (incidence_number n <= incidence_number a)}
   =
-    (incidence_number n <= incidence_number a) && true (* Temporarily *)
+    (*(incidence_number n <= incidence_number a) && *)true (* Temporarily *)
   
   (* To associate a node and an atom in a matching with one element *)
-  let start_matching (n a: vertex) : matching
+  let function start_matching (n a: vertex) : matching
+    requires {vertex_in a atoms}
+    requires {vertex_in n nodes}
+    (*
+    ensures  {mem n result}
+    ensures  {a = (find n result)}
+    ensures  {size result = 1}
+    *)
+    ensures  {Matching.(==) result (Matching.add n a Matching.empty)}
   =
-    add n a (create ())
+    Matching.add n a (create ())
   
   (* THE ALMIGHTY ALGORITM *)
-  let find_matched_pattern () : fset matching
+  let find_matched_pattern () : set
   =
-    if is_empty atoms then empty
-    else let all_starts = map start_matching (filter atoms (is_compatible_vertex min_node)) in
-    
+    if is_empty atoms then empty()
+    else (let all_starts = empty() in
+    (* assert {all_starts == map start_matching (filter atoms (is_compatible_vertex min_node))}; *)
+    empty()
+    )
 end
+
+*)
