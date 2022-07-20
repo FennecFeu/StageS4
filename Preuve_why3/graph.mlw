@@ -81,6 +81,12 @@ module Vertex
   
   (* Predicate on vertex that belongs to the set or not *)
   predicate vertex_in (x: vertex) (s: fset vertex) = mem x s
+  
+  (* Predicate to verify equality between two vertices *)
+  let predicate vertex_eq (x y: vertex)
+  ensures {result = (x = y)}
+  =
+    (singleton x) == (singleton y)
 end
 
 module Edge
@@ -100,16 +106,22 @@ module Edge
     elt
   
   (* Function to get the first vertex from an edge *)
-  let function get_edge_pred edge : edge_elt
+  let function get_edge_pred edge : vertex
   =
     let (pred, _, _) = edge in
     pred
     
   (* Function to get the first vertex from an edge *)
-  let function get_edge_succ edge : edge_elt
+  let function get_edge_succ edge : vertex
   =
     let (_, _, succ) = edge in
     succ
+    
+  (* Predicate to determine if two vertices can be the extremities of an edge *)
+  let predicate correct_extremities (u v: vertex) (e: edge) : bool
+  ensures {result = ((get_edge_pred e = u) /\ (get_edge_succ e = v))}
+  =
+    (vertex_eq (get_edge_pred e) u) && (vertex_eq (get_edge_succ e) v)
   
   clone export set.SetApp with type elt = edge
   
@@ -132,33 +144,22 @@ module Graph
                 preds : linked;
                 succs : linked;
                 edges : Edge.set; }
-  invariant {forall v. Vertex.mem v vertices -> mem v preds} (*  *)
+  (* All vertices are keys in preds *)
+  invariant {forall v. Vertex.mem v vertices -> mem v preds}
+  (* All vertices are keys in succs *)
   invariant {forall v. Vertex.mem v vertices -> mem v succs}
+  (* Predecessors are vertices *)
   invariant {forall v. mem v preds -> subset (find v preds) vertices}
+  (* Successors are vertices *)
   invariant {forall v. mem v succs -> subset (find v succs) vertices}
+  (* Relation between predecessors and successors *)
   invariant {forall v w. Vertex.mem v vertices -> (vertex_in w (find v succs) <-> vertex_in v (find w preds))}
-  invariant {forall e. Edge.mem e edges -> let (pred, _, succ) = e in vertex_in succ (find pred succs)}
-  by {vertices = Vertex.empty(); preds = create(); succs = create(); edges = empty()}
-
   (*
-  (* The set containing all the vertices of the data graph *)
-  constant atoms : Vertex.set
-  (* The set containing all the vertices of the query graph *)
-  constant nodes : Vertex.set
-  
-  (* Nodes and atoms are two separate sets *)
-  axiom inter_set_vertex_empty:
-    disjoint atoms nodes
-    
-  (* The set containing all the edges of the data graph *)
-  constant bridges : Edge.set
-  (* The set containing all the edges of the query graph *)
-  constant links : Edge.set
-  
-  (* Bridges and links are two separate sets *)
-  axiom inter_set_edge_empty:
-    disjoint bridges links
-    *)
+  invariant {forall e f: edge. e = f \/ not get_edge_pred e = get_edge_pred f \/ not get_edge_succ e = get_edge_succ f}
+  (* An edge means *)
+  invariant {forall e: edge. let pred = get_edge_pred e in let succ = get_edge_succ e in (Edge.mem e edges <-> vertex_in succ (find pred succs))}
+  *)
+  by {vertices = Vertex.empty(); preds = create(); succs = create(); edges = empty()}
   
   (* Function to get all the successors of the vertex in the graph *)
   let function successors (v: vertex) (g: graph) : Vertex.set
@@ -173,12 +174,20 @@ module Graph
   ensures  {result = find v g.preds}
   =
     find v g.preds
-    
+  
   (*
-  
   (* Function to get an edge from the two nodes at its extremities *)
-  function get_edge vertex vertex : edge
+  let function get_edge (u v: vertex vertex) (g: graph) : edge
+  requires {vertex_in u g.vertices}
+  requires {vertex_in v (find u g.succs)}
+  ensures  {Edge.mem result g.edges}
+  ensures  {get_edge_succ result = v}
+  ensures  {get_edge_pred result = u}
+  =
+    let rec *)
   
+  
+  (*
   (* Edges have vertices at their extremities that all belong to their graph *)
   axiom get_edge_bridges:
     forall x y. mem (get_edge x y) bridges -> mem x atoms /\ mem y atoms
@@ -206,19 +215,52 @@ module Graph
   (* The minimum is lesser than all the nodes *)
   axiom minimum_min_node :
     forall x. mem x nodes -> min_node << x
+  *)
   
-  function incidence_number vertex : int
-  
-  axiom incidence_number_cardinal :
-    forall x. mem x (union nodes atoms) -> incidence_number x = cardinal (successors x) + cardinal (predecessors x)
-    
-  (*
-  let incidence2_number (n: vertex) : int
+  let function incidence_number (v: vertex) (g: graph) : int
+  requires {vertex_in v g.vertices}
+  ensures  {result = cardinal (find v g.succs) + cardinal (find v g.preds)}
   =
-    cardinal (successors n) + cardinal (predecessors n)
-    *)
+    cardinal (find v g.succs) + cardinal (find v g.preds)
     
-    *)
+  let predicate order (x y: vertex) (g: graph) : bool
+  requires {vertex_in x g.vertices}
+  requires {vertex_in y g.vertices}
+  ensures  {result = (incidence_number x g >= incidence_number y g)}
+  =
+    incidence_number x g >= incidence_number y g
+  
+  lemma order_reflexivity:
+    forall g: graph. forall x: vertex. Vertex.mem x g.vertices -> order x x g
+    
+  lemma order_transitivity:
+    forall g: graph. forall x y z: vertex.
+    Vertex.mem x g.vertices /\ Vertex.mem y g.vertices /\ Vertex.mem z g.vertices
+    /\ order x y g /\ order y z g -> order x z g
+    
+  let optimum_vertex (g: graph) : vertex
+  requires {not Vertex.is_empty g.vertices}
+  ensures  {vertex_in result g.vertices}
+  ensures  {forall v: vertex. Vertex.mem v g.vertices -> order result v g}
+  =
+    let rec compare_optimum (x: vertex) (ens: Vertex.set) : vertex
+    variant  {cardinal ens}
+    requires {vertex_in x g.vertices}
+    requires {Vertex.subset ens g.vertices}
+    ensures  {vertex_in result g.vertices}
+    ensures  {forall v: vertex. Vertex.mem v ens -> order result v g}
+    =
+      if is_empty ens then x
+      else let y = Vertex.choose ens in
+      let new_ens = Vertex.remove y ens in
+      if order x y g then compare_optimum x new_ens
+      else compare_optimum y new_ens
+    in
+    let x = Vertex.choose g.vertices in
+    let ens = Vertex.remove x g.vertices in
+    compare_optimum x ens
+      
+  
 end
     
 module Matching
