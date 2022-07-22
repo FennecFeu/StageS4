@@ -210,17 +210,17 @@ module Graph
   ensures  {correct_extremities u v result}
   =
     (* Auxiliary function to choose an edge and verify if the edge is valid or not *)
-    let rec compare_edge (ens: Edge.set) : edge
+    let rec compare_edge (s: Edge.set) : edge
     variant  {cardinal ens}
-    requires {Edge.subset ens g.edges}
+    requires {Edge.subset s g.edges}
     requires {has_edge_set u v ens}
     ensures  {Edge.mem result g.edges}
     ensures  {correct_extremities u v result}
     =
-    let e = choose ens in
-    let new_ens = Edge.remove e ens in
+    let e = choose s in
+    let new_set = Edge.remove e s in
     if correct_extremities u v e then e
-    else compare_edge new_ens
+    else compare_edge new_set
     in
     compare_edge g.edges
     
@@ -263,24 +263,23 @@ module Graph
   ensures  {forall v: vertex. Vertex.mem v g.vertices -> order result v g}
   =
     (* Auxiliary function in order to make the recursion to verify the vertex we stock is the optimum *)
-    let rec compare_optimum (x: vertex) (ens: Vertex.set) : vertex
-    variant  {cardinal ens} (* We remove vertices from the ensemble until it is empty *)
-    requires {vertex_in x g.vertices} (* x is one of the possible candidate to be the optimum *)
+    let rec compare_optimum (x: vertex) (s: Vertex.set) : vertex
+    variant  {cardinal s} (* We remove vertices from the set possible candidate to be the optimum *)
     requires {Vertex.subset ens g.vertices} 
     requires {forall v: vertex. Vertex.mem v (Vertex.diff g.vertices ens) -> order x v g} (* x is the local optimum *)
     ensures  {vertex_in result g.vertices}
     ensures  {forall v: vertex. Vertex.mem v g.vertices -> order result v g}
     =
-      if is_empty ens then x
-      else let y = Vertex.choose ens in
-      let new_ens = Vertex.remove y ens in
-      if order x y g then compare_optimum x new_ens
+      if is_empty s then x
+      else let y = Vertex.choose s in
+      let new_set = Vertex.remove y s in
+      if order x y g then compare_optimum x new_set
       else let _ = assert {order y x g} in
-      compare_optimum y new_ens
+      compare_optimum y new_set
     in
     let x = Vertex.choose g.vertices in
-    let ens = Vertex.remove x g.vertices in
-    compare_optimum x ens
+    let s = Vertex.remove x g.vertices in
+    compare_optimum x s
       
   
 end
@@ -296,6 +295,58 @@ module Matching
   
   (* Elements in the result set *)
   type matching = t vertex
+  
+end
+
+module States
+
+  use Vertex
+  use Edge
+  use Graph
+  use Matching
+  
+  type qstate =
+    {n_seen : Vertex.set;
+     n_seen_succ : Vertex.set;
+     n_seen_pred : Vertex.set;}
+  invariant {Vertex.is_empty (Vertex.inter n_seen n_seen_succ)}
+  invariant {Vertex.is_empty (Vertex.inter n_seen n_seen_pred)}
+     
+  let function empty_qstate () : qstate
+  ensures {Vertex.is_empty result.n_seen}
+  ensures {Vertex.is_empty result.n_seen_succ}
+  ensures {Vertex.is_empty result.n_seen_pred}
+  =
+    {n_seen = Vertex.empty();
+     n_seen_succ = Vertex.empty();
+     n_seen_pred = Vertex.empty();}
+  
+  type gstate =
+    {matching_peers : Matching.matching;
+     a_seen : Vertex.set;
+     a_seen_succ : Vertex.set;
+     a_seen_pred : Vertex.set;
+     a_next : Vertex.set;}
+  invariant {
+  invariant {Vertex.is_empty (Vertex.inter a_seen a_seen_succ)}
+  invariant {Vertex.is_empty (Vertex.inter a_seen a_seen_pred)}
+     
+  let function empty_gstate () : gstate
+  ensures {Matching.is_empty result.matching_peers}
+  ensures {Vertex.is_empty result.a_seen}
+  ensures {Vertex.is_empty result.a_seen_succ}
+  ensures {Vertex.is_empty result.a_seen_pred}
+  ensures {Vertex.is_empty result.a_next}
+  =
+    {matching_peers = Matching.create();
+     a_seen = Vertex.empty();
+     a_seen_succ = Vertex.empty();
+     a_seen_pred = Vertex.empty();
+     a_next = Vertex.empty();}
+  
+  clone export set.SetApp with type elt = gstate
+  
+  type gstates = set
   
 end
 
@@ -324,22 +375,42 @@ module AlgoGraph
   =
     true
   
-  (* To associate a node and an atom in a matching with one element *)
+  (* Function to associate a node and an atom in a matching with one element *)
   let function start_matching (q g: graph) (n a: vertex) : matching
     requires {vertex_in a g.vertices}
     requires {vertex_in n q.vertices}
     ensures  {Matching.(==) result (Matching.add n a Matching.empty)}
   =
     Matching.add n a (create ())
-  
-
+    
+  (* Function to create the set all_starts in the main algorithm *)
+  let function create_all_starts (q g: graph)
+  requires {not Vertex.is_empty q.vertices}
+  ensures  {let opt = optimum_vertex q in
+            result == map (start_matching q g opt) (filter g.vertices (is_compatible_vertex q g opt))}
+  =
+    let opt = optimum_vertex q in
+    let rec create_rec (vertices: Vertex.set) (partial_starts: set) : set
+    variant  {Vertex.cardinal vertices}
+    requires {Vertex.subset vertices g.vertices}
+    requires {partial_starts == map (start_matching q g opt) (filter (Vertex.diff g.vertices vertices) (is_compatible_vertex q g opt))}
+    ensures  {result == map (start_matching q g opt) (filter g.vertices (is_compatible_vertex q g opt))}
+    =
+      if Vertex.is_empty vertices then partial_starts
+      else let a = Vertex.choose vertices in
+      let new_set = Vertex.remove a vertices in
+      let new_starts = if is_compatible_vertex q g opt a then add (start_matching q g opt a) partial_starts
+                       else partial_starts in
+      create_rec new_set new_starts
+    in
+    create_rec g.vertices (empty())
+    
+    
   (* THE ALMIGHTY ALGORITM *)
   let find_matched_pattern (q g: graph) : set
   =
     if is_empty q.vertices then empty()
-    else let opt = optimum_vertex q in
-    let all_starts = empty() in
-    let _ = assert {all_starts == map (start_matching q g opt) (filter g.vertices (is_compatible_vertex q g (opt)))} in
+    else let all_starts = create_all_starts q g in
     empty()
 
 end
