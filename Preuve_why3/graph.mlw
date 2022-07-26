@@ -211,9 +211,9 @@ module Graph
   =
     (* Auxiliary function to choose an edge and verify if the edge is valid or not *)
     let rec compare_edge (s: Edge.set) : edge
-    variant  {cardinal ens}
+    variant  {cardinal s}
     requires {Edge.subset s g.edges}
-    requires {has_edge_set u v ens}
+    requires {has_edge_set u v s}
     ensures  {Edge.mem result g.edges}
     ensures  {correct_extremities u v result}
     =
@@ -265,8 +265,9 @@ module Graph
     (* Auxiliary function in order to make the recursion to verify the vertex we stock is the optimum *)
     let rec compare_optimum (x: vertex) (s: Vertex.set) : vertex
     variant  {cardinal s} (* We remove vertices from the set possible candidate to be the optimum *)
-    requires {Vertex.subset ens g.vertices} 
-    requires {forall v: vertex. Vertex.mem v (Vertex.diff g.vertices ens) -> order x v g} (* x is the local optimum *)
+    requires {Vertex.mem x g.vertices}
+    requires {Vertex.subset s g.vertices} 
+    requires {forall v: vertex. Vertex.mem v (Vertex.diff g.vertices s) -> order x v g} (* x is the local optimum *)
     ensures  {vertex_in result g.vertices}
     ensures  {forall v: vertex. Vertex.mem v g.vertices -> order result v g}
     =
@@ -305,13 +306,16 @@ module States
   use Graph
   use Matching
   
+  (* State to register the step in the algorithm on the query graph *)
   type qstate =
     {n_seen : Vertex.set;
      n_seen_succ : Vertex.set;
      n_seen_pred : Vertex.set;}
   invariant {Vertex.is_empty (Vertex.inter n_seen n_seen_succ)}
   invariant {Vertex.is_empty (Vertex.inter n_seen n_seen_pred)}
+  by {n_seen = Vertex.empty(); n_seen_pred = Vertex.empty(); n_seen_succ = Vertex.empty()}
      
+  (* Function to create an empty qstate *)
   let function empty_qstate () : qstate
   ensures {Vertex.is_empty result.n_seen}
   ensures {Vertex.is_empty result.n_seen_succ}
@@ -321,16 +325,19 @@ module States
      n_seen_succ = Vertex.empty();
      n_seen_pred = Vertex.empty();}
   
+  (* State to register the step in the algorithm on the data graph *)
   type gstate =
     {matching_peers : Matching.matching;
      a_seen : Vertex.set;
      a_seen_succ : Vertex.set;
      a_seen_pred : Vertex.set;
      a_next : Vertex.set;}
-  invariant {
+  invariant {forall a: vertex. Vertex.mem a a_seen <-> exists n: vertex. Matching.mapsto n a matching_peers}
   invariant {Vertex.is_empty (Vertex.inter a_seen a_seen_succ)}
   invariant {Vertex.is_empty (Vertex.inter a_seen a_seen_pred)}
-     
+  by {matching_peers = create(); a_seen = Vertex.empty(); a_seen_pred = Vertex.empty(); a_seen_succ = Vertex.empty(); a_next = Vertex.empty()}
+  
+  (* Function to create an empty gstate *)
   let function empty_gstate () : gstate
   ensures {Matching.is_empty result.matching_peers}
   ensures {Vertex.is_empty result.a_seen}
@@ -343,6 +350,36 @@ module States
      a_seen_succ = Vertex.empty();
      a_seen_pred = Vertex.empty();
      a_next = Vertex.empty();}
+     
+  (* Function to add a peering in the g_state, and make the needed modification *)
+  let function add_peering_g (g: graph) (n a: vertex) (s: gstate) : gstate
+  requires {vertex_in a g.vertices}
+  requires {not Matching.mem n s.matching_peers}
+  requires {forall v: vertex. not Matching.mapsto v a s.matching_peers}
+  ensures  {result.a_seen = Vertex.add a s.a_seen}
+  ensures  {result.matching_peers = Matching.add n a s.matching_peers}
+  ensures  {result.a_seen_succ = Vertex.diff (Vertex.union s.a_seen_succ (successors a g)) (result.a_seen)}
+  ensures  {result.a_seen_pred = Vertex.diff (Vertex.union s.a_seen_pred (predecessors a g)) (result.a_seen)}
+  ensures  {result.a_next = Vertex.union (successors a g) (predecessors a g)}
+  =
+    let new_a_seen = Vertex.add a s.a_seen in
+    {matching_peers = Matching.add n a s.matching_peers;
+     a_seen = new_a_seen;
+     a_seen_succ = Vertex.diff (Vertex.union s.a_seen_succ (successors a g)) (new_a_seen);
+     a_seen_pred = Vertex.diff (Vertex.union s.a_seen_pred (predecessors a g)) (new_a_seen);
+     a_next = Vertex.union (successors a g) (predecessors a g);}
+     
+  (* Function to add the vertex n in the q_state, and make the needed modification *)
+  let function add_peering_q (q: graph) (n: vertex) (s: qstate) : qstate
+  requires {vertex_in n q.vertices}
+  ensures  {result.n_seen = Vertex.add n s.n_seen}
+  ensures  {result.n_seen_succ = Vertex.diff (Vertex.union s.n_seen_succ (successors n q)) (result.n_seen)}
+  ensures  {result.n_seen_pred = Vertex.diff (Vertex.union s.n_seen_pred (predecessors n q)) (result.n_seen)}
+  =
+    let new_n_seen = Vertex.add n s.n_seen in
+    {n_seen = new_n_seen;
+     n_seen_succ = Vertex.diff (Vertex.union s.n_seen_succ (successors n q)) (new_n_seen);
+     n_seen_pred = Vertex.diff (Vertex.union s.n_seen_pred (predecessors n q)) (new_n_seen);}
   
   clone export set.SetApp with type elt = gstate
   
@@ -384,7 +421,7 @@ module AlgoGraph
     Matching.add n a (create ())
     
   (* Function to create the set all_starts in the main algorithm *)
-  let function create_all_starts (q g: graph)
+  let function create_all_starts (q g: graph) : set
   requires {not Vertex.is_empty q.vertices}
   ensures  {let opt = optimum_vertex q in
             result == map (start_matching q g opt) (filter g.vertices (is_compatible_vertex q g opt))}
@@ -408,6 +445,23 @@ module AlgoGraph
     
   (* THE ALMIGHTY ALGORITM *)
   let find_matched_pattern (q g: graph) : set
+  (*
+  (* Vertices in the matching are vertices of the graphs *)
+  ensures {forall a n: vertex. forall m: matching. Matching.mem m result /\ Matching.mapsto n a m -> Vertex.mem n q.vertices /\ Vertex.mem a g.vertices}
+  (* All vertices in the query graph are matched *)
+  ensures {forall n: vertex. forall m: matching. Matching.mem m result /\ Vertex.mem n q.vertices -> Matching.mem n m}
+  (* The matching is bijective *)
+  ensures {forall a a' n n': vertex. Matching.mapsto n a /\ Matching.mapsto n' a' -> (a = a' /\ n = n') \/ (a <> a' /\ n <> n')}
+  (* Two matched vertices are similar *)
+  ensures {forall a n: vertex. Matching.mapsto n a result -> is_similar_vertex n a}
+  (* All edges in the query graph are matched in the data graph *)
+  ensures {forall e: edge. Edge.mem e q.edges
+          -> has_edge_graph (find (get_edge_pred e) result) (find (get_edge_succ e) result) g}
+  (* Matched edges are similar *)
+  ensures {forall e: edge. Edge.mem e q.edges
+          -> let e' = find_edge (find (get_edge_pred e) result) (find (get_edge_succ e) result) g in
+          is_similar_edge e e'}
+          *)
   =
     if is_empty q.vertices then empty()
     else let all_starts = create_all_starts q g in
