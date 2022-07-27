@@ -1,77 +1,3 @@
-(*
-module Graph
-  
-  use int.Int
-  use export set.Fset
-
-  (* The type related to the edges of the graph *)
-  type edge
-
-  (* The type related to the vertices of the graph *)
-  type vertex
-
-  (* The set containing all the vertices of the graph *)
-  constant vertices : fset vertex
-
-  (* The set containing all the edges of the graph *)
-  constant edges : fset edge
-  
-  (* Function to get all the successors of the vertex in the graph *)
-  function successors vertex : fset vertex
-  
-  (* Function to get all the predecessors of the vertex in the graph *)
-  function predecessors vertex : fset vertex
-  
-  (* The successors of a vertex in the graph are all vertices in the graph *)
-  axiom successors_vertices:
-    forall x. mem x vertices -> subset (successors x) vertices
-    
-  (* The predecessors of a vertex in the graph are all vertices in the graph *)
-  axiom predecessors_vertices:
-    forall x. mem x vertices -> subset (predecessors x) vertices
-    
-  (* Predecessors and successors are linked and consistent *)
-  axiom equiv_preds_and_succs:
-    forall x y. mem y (successors x) <-> mem x (predecessors y)
-  
-  (* Function to get an edge from the two nodes at its extremities *)
-  function get_edge vertex vertex : edge
-  
-  (* Edges have vertices at their extremities that all belong to the graph *)
-  axiom get_edge_edges:
-    forall x y. mem (get_edge x y) edges -> mem x vertices /\ mem y vertices
-    
-  (* Edges imply a successor for a vertex in the graph *)
-  axiom get_edge_succs:
-    forall x y. mem (get_edge x y) edges -> mem y (successors x)
-    
-  (* Predicate to make the clone export *)
-  predicate edge_exists (x y: vertex) = mem (get_edge x y) edges
-
-  clone export graph.Path with type vertex = vertex, predicate edge = edge_exists
-  
-  predicate (<<) (x y: vertex)
-  
-  constant min_vertex : vertex
-  
-  axiom vertex_min_vertex :
-    mem min_vertex vertices
-  
-  axiom minimum_min_vertex :
-    forall x. mem x vertices -> min_vertex << x
-    
-  (*
-    @requires None
-    @ensures Given the operation and a graph, returns from an entry a modified value after calling the operation on all the nodes of the graph.
-   *)
-  (* type ('a) fold_vertices = ('a -> vertex -> 'a) -> 'a -> 'a *)
-  
-  function incidence_number vertex : int
-  
-  axiom incidence_number_cardinal :
-    forall x. mem x vertices -> incidence_number x = cardinal (successors x) + cardinal (predecessors x)
-end *)
-
 module Vertex
 
   (* The type related to the vertices of the graph *)
@@ -90,6 +16,13 @@ module Vertex
   ensures {result = (x = y)}
   =
     (singleton x) == (singleton y)
+  
+  predicate disjoint_vertices (s1 s2: set) =
+    is_empty (inter s1 s2)
+    
+  predicate is_union_vertices_without (s s1 s2 sw: set) =
+    s = diff (union s1 s2) sw
+  
 end
 
 module Edge
@@ -125,6 +58,10 @@ module Edge
   ensures {result = ((get_edge_pred e = u) /\ (get_edge_succ e = v))}
   =
     (vertex_eq (get_edge_pred e) u) && (vertex_eq (get_edge_succ e) v)
+    
+  (* Predicate to determine if two vertices has at least one different extremity *)
+  predicate distinct_extremities (e f: edge) =
+    not get_edge_pred e = get_edge_pred f \/ not get_edge_succ e = get_edge_succ f
   
   clone export set.SetApp with type elt = edge
     
@@ -134,8 +71,13 @@ module Edge
   =
     mem e s
   
+  (* Predicate to determine if a set has an edge with correct extremities *)
   predicate has_edge_set (u v: vertex) (s: set) =
-    exists e: edge. mem e s /\ correct_extremities u v e
+    exists e: edge. edge_in e s /\ correct_extremities u v e
+    
+  (* Predicate to determine if a set has only one edge with the same extremities *)  
+  predicate extremities_primary_key (s: set) =
+    forall e f: edge. (edge_in e s /\ edge_in f s) -> e = f \/ distinct_extremities e f
   
 end
   
@@ -151,31 +93,54 @@ module Graph
   (* The type of the successors and predecessors map in the graph *)
   type linked = t Vertex.set
   
+  (* Predicate to say a set of vertices is the domain of a map *)
+  predicate vertices_is_domain (s: Vertex.set) (m: linked) =
+    forall v. vertex_in v s <-> mem v m
+    
+  (* Predicate to say the values of the map are included in the set s *)
+  predicate values_subset_of (m: linked) (s: Vertex.set) =
+    forall v. mem v m -> subset (find v m) s
+  
+  (* Predicate to say that two maps acts like a mirror for two vertices *)
+  predicate mirror_between_maps_two_vertices (v w: vertex) (m1 m2: linked) =
+    vertex_in w (find v m1) <-> vertex_in v (find w m2)
+  
+  (* Predicate to say that two maps acts like a mirror for two vertices *)
+  predicate mirror_between_maps (m1 m2: linked) =
+    forall v w. mem v m1 -> mirror_between_maps_two_vertices v w m1 m2
+  
+  (* Predicate to determine if one of the element returned by the find is actually succ *)
+  predicate find_vertex (pred succ: vertex) (m: linked) =
+    vertex_in succ (find pred m)
+    
+  (* Predicate to link edge set and linked map *)
+  predicate edge_means_link (s: Edge.set) (m: linked) =
+    forall e: edge. (Edge.mem e s -> find_vertex (get_edge_pred e) (get_edge_succ e) m)
+  
+  predicate link_means_edge (m: linked) (s: Edge.set) =
+    forall u v: vertex. mem u m /\ find_vertex u v m -> has_edge_set u v s
+  
   (* The type related to the graph *)
   type graph = {vertices : Vertex.set;
                 preds : linked;
                 succs : linked;
                 edges : Edge.set; }
   (* All vertices are keys in preds *)
-  invariant {forall v. Vertex.mem v vertices -> mem v preds}
+  invariant {vertices_is_domain vertices preds}
   (* All vertices are keys in succs *)
-  invariant {forall v. Vertex.mem v vertices -> mem v succs}
+  invariant {vertices_is_domain vertices succs}
   (* Predecessors are vertices *)
-  invariant {forall v. mem v preds -> subset (find v preds) vertices}
+  invariant {values_subset_of preds vertices}
   (* Successors are vertices *)
-  invariant {forall v. mem v succs -> subset (find v succs) vertices}
+  invariant {values_subset_of succs vertices}
   (* Relation between predecessors and successors *)
-  invariant {forall v w. Vertex.mem v vertices -> (vertex_in w (find v succs) <-> vertex_in v (find w preds))}
+  invariant {mirror_between_maps preds succs}
   (* A graph can't have two edges with same extremities *)
-  invariant {forall e f: edge. (Edge.mem e edges /\ Edge.mem f edges)
-            -> e = f \/ not get_edge_pred e = get_edge_pred f \/ not get_edge_succ e = get_edge_succ f}
+  invariant {extremities_primary_key edges}
   (* An edge means one vertex is the successor of the other edge *)
-  invariant {forall e: edge. 
-            let pred = get_edge_pred e in
-            let succ = get_edge_succ e in
-            (Edge.mem e edges -> vertex_in succ (find pred succs))}
+  invariant {edge_means_link edges succs}
   (* If a vertex has a successor, then there is an edge between those two vertices *)
-  invariant {forall u v: vertex. Vertex.mem u vertices /\ vertex_in v (find u succs) -> has_edge_set u v edges}
+  invariant {link_means_edge succs edges}
   by {vertices = Vertex.empty(); preds = create(); succs = create(); edges = empty()}
   
   (* Function to get all the successors of the vertex in the graph *)
@@ -194,7 +159,7 @@ module Graph
     
   let predicate has_edge_graph (u v: vertex) (g: graph) : bool
   requires {vertex_in u g.vertices}
-  ensures {result = vertex_in v (successors u g)}
+  ensures {result = find_vertex u v g.succs}
   =
     (vertex_in v (successors u g))
     
@@ -253,23 +218,31 @@ module Graph
   (* The order must be transitive *)
   lemma order_transitivity:
     forall g: graph. forall x y z: vertex.
-    Vertex.mem x g.vertices /\ Vertex.mem y g.vertices /\ Vertex.mem z g.vertices
+    vertex_in x g.vertices /\ vertex_in y g.vertices /\ vertex_in z g.vertices
     /\ order x y g /\ order y z g -> order x z g
+  
+  (* Predicate to determine if the given vertex is a local optimum *)
+  predicate is_local_optimum (opt: vertex) (g: graph) (s: Vertex.fset vertex) =
+    forall v: vertex. Vertex.mem v s -> order opt v g
+  
+  (* Predicate to determine if the given vertex is an optimum *)
+  predicate is_optimum (opt: vertex) (g: graph) =
+    is_local_optimum opt g g.vertices
     
   (* Function to obtain the optimum vertex in a graph (it will be exploited to start our algorithm) *)
   let function optimum_vertex (g: graph) : vertex
   requires {not Vertex.is_empty g.vertices}
   ensures  {vertex_in result g.vertices}
-  ensures  {forall v: vertex. Vertex.mem v g.vertices -> order result v g}
+  ensures  {is_optimum result g}
   =
     (* Auxiliary function in order to make the recursion to verify the vertex we stock is the optimum *)
     let rec compare_optimum (x: vertex) (s: Vertex.set) : vertex
     variant  {cardinal s} (* We remove vertices from the set possible candidate to be the optimum *)
-    requires {Vertex.mem x g.vertices}
+    requires {vertex_in x g.vertices}
     requires {Vertex.subset s g.vertices} 
-    requires {forall v: vertex. Vertex.mem v (Vertex.diff g.vertices s) -> order x v g} (* x is the local optimum *)
+    requires {is_local_optimum x g (Vertex.diff g.vertices s)} (* x is the local optimum *)
     ensures  {vertex_in result g.vertices}
-    ensures  {forall v: vertex. Vertex.mem v g.vertices -> order result v g}
+    ensures  {is_optimum result g}
     =
       if is_empty s then x
       else let y = Vertex.choose s in
@@ -297,6 +270,12 @@ module Matching
   (* Elements in the result set *)
   type matching = t vertex
   
+  predicate is_value_in (a: vertex) (m: matching) =
+    exists n: vertex. mapsto n a m
+  
+  predicate is_range (s: Vertex.set) (m: matching) =
+    forall a: vertex. vertex_in a s <-> is_value_in a m
+  
 end
 
 module States
@@ -311,8 +290,8 @@ module States
     {n_seen : Vertex.set;
      n_seen_succ : Vertex.set;
      n_seen_pred : Vertex.set;}
-  invariant {Vertex.is_empty (Vertex.inter n_seen n_seen_succ)}
-  invariant {Vertex.is_empty (Vertex.inter n_seen n_seen_pred)}
+  invariant {disjoint_vertices n_seen n_seen_succ}
+  invariant {disjoint_vertices n_seen n_seen_pred}
   by {n_seen = Vertex.empty(); n_seen_pred = Vertex.empty(); n_seen_succ = Vertex.empty()}
      
   (* Function to create an empty qstate *)
@@ -332,9 +311,9 @@ module States
      a_seen_succ : Vertex.set;
      a_seen_pred : Vertex.set;
      a_next : Vertex.set;}
-  invariant {forall a: vertex. Vertex.mem a a_seen <-> exists n: vertex. Matching.mapsto n a matching_peers}
-  invariant {Vertex.is_empty (Vertex.inter a_seen a_seen_succ)}
-  invariant {Vertex.is_empty (Vertex.inter a_seen a_seen_pred)}
+  invariant {is_range a_seen matching_peers}
+  invariant {disjoint_vertices a_seen a_seen_succ}
+  invariant {disjoint_vertices a_seen a_seen_pred}
   by {matching_peers = create(); a_seen = Vertex.empty(); a_seen_pred = Vertex.empty(); a_seen_succ = Vertex.empty(); a_next = Vertex.empty()}
   
   (* Function to create an empty gstate *)
@@ -355,11 +334,11 @@ module States
   let function add_peering_g (g: graph) (n a: vertex) (s: gstate) : gstate
   requires {vertex_in a g.vertices}
   requires {not Matching.mem n s.matching_peers}
-  requires {forall v: vertex. not Matching.mapsto v a s.matching_peers}
+  requires {forall n. not Matching.mapsto n a s.matching_peers}
   ensures  {result.a_seen = Vertex.add a s.a_seen}
   ensures  {result.matching_peers = Matching.add n a s.matching_peers}
-  ensures  {result.a_seen_succ = Vertex.diff (Vertex.union s.a_seen_succ (successors a g)) (result.a_seen)}
-  ensures  {result.a_seen_pred = Vertex.diff (Vertex.union s.a_seen_pred (predecessors a g)) (result.a_seen)}
+  ensures  {is_union_vertices_without result.a_seen_succ s.a_seen_succ (successors a g) result.a_seen}
+  ensures  {is_union_vertices_without result.a_seen_pred s.a_seen_pred (predecessors a g) result.a_seen}
   ensures  {result.a_next = Vertex.union (successors a g) (predecessors a g)}
   =
     let new_a_seen = Vertex.add a s.a_seen in
@@ -373,8 +352,8 @@ module States
   let function add_peering_q (q: graph) (n: vertex) (s: qstate) : qstate
   requires {vertex_in n q.vertices}
   ensures  {result.n_seen = Vertex.add n s.n_seen}
-  ensures  {result.n_seen_succ = Vertex.diff (Vertex.union s.n_seen_succ (successors n q)) (result.n_seen)}
-  ensures  {result.n_seen_pred = Vertex.diff (Vertex.union s.n_seen_pred (predecessors n q)) (result.n_seen)}
+  ensures  {is_union_vertices_without result.n_seen_succ s.n_seen_succ (successors n q) result.n_seen}
+  ensures  {is_union_vertices_without result.n_seen_pred s.n_seen_pred (predecessors n q) result.n_seen}
   =
     let new_n_seen = Vertex.add n s.n_seen in
     {n_seen = new_n_seen;
@@ -419,19 +398,26 @@ module AlgoGraph
     ensures  {Matching.(==) result (Matching.add n a Matching.empty)}
   =
     Matching.add n a (create ())
-    
+  
+  (* Predicate to determine if couples in ms are correct starting matching from s *)
+  predicate is_partial_compatible_matching (ms: set) (q g: graph) (opt: vertex) (s: Vertex.fset vertex) =
+    ms == map (start_matching q g opt) (filter s (is_compatible_vertex q g opt))
+  
+  (* Predicate to determine if couples in ms are correct starting matching from the graph g *)
+  predicate is_complete_compatible_matching (ms: set) (q g: graph) (opt: vertex) =
+    is_partial_compatible_matching ms q g opt g.vertices
+      
   (* Function to create the set all_starts in the main algorithm *)
   let function create_all_starts (q g: graph) : set
   requires {not Vertex.is_empty q.vertices}
-  ensures  {let opt = optimum_vertex q in
-            result == map (start_matching q g opt) (filter g.vertices (is_compatible_vertex q g opt))}
+  ensures  {is_complete_compatible_matching result q g (optimum_vertex q)}
   =
     let opt = optimum_vertex q in
     let rec create_rec (vertices: Vertex.set) (partial_starts: set) : set
     variant  {Vertex.cardinal vertices}
     requires {Vertex.subset vertices g.vertices}
-    requires {partial_starts == map (start_matching q g opt) (filter (Vertex.diff g.vertices vertices) (is_compatible_vertex q g opt))}
-    ensures  {result == map (start_matching q g opt) (filter g.vertices (is_compatible_vertex q g opt))}
+    requires {is_partial_compatible_matching partial_starts q g opt (Vertex.diff g.vertices vertices)}
+    ensures  {is_complete_compatible_matching result q g opt}
     =
       if Vertex.is_empty vertices then partial_starts
       else let a = Vertex.choose vertices in
@@ -460,8 +446,7 @@ module AlgoGraph
   (* Matched edges are similar *)
   ensures {forall e: edge. Edge.mem e q.edges
           -> let e' = find_edge (find (get_edge_pred e) result) (find (get_edge_succ e) result) g in
-          is_similar_edge e e'}
-          *)
+          is_similar_edge e e'} *)
   =
     if is_empty q.vertices then empty()
     else let all_starts = create_all_starts q g in
