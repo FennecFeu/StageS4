@@ -342,11 +342,16 @@ module States
   ensures  {result.a_next = Vertex.union (successors a g) (predecessors a g)}
   =
     let new_a_seen = Vertex.add a s.a_seen in
+    let new_matching_peers = Matching.add n a s.matching_peers in
+    let _ = assert {forall a1. vertex_in a1 new_a_seen
+                    -> (vertex_in a1 s.a_seen /\ exists n1. Matching.mapsto n1 a1 (Matching.add n a s.matching_peers))
+                    \/ (a1 = a /\ Matching.mapsto n a1 (Matching.add n a s.matching_peers))} in
     {matching_peers = Matching.add n a s.matching_peers;
      a_seen = new_a_seen;
      a_seen_succ = Vertex.diff (Vertex.union s.a_seen_succ (successors a g)) (new_a_seen);
      a_seen_pred = Vertex.diff (Vertex.union s.a_seen_pred (predecessors a g)) (new_a_seen);
      a_next = Vertex.union (successors a g) (predecessors a g);}
+     
      
   (* Function to add the vertex n in the q_state, and make the needed modification *)
   let function add_peering_q (q: graph) (n: vertex) (s: qstate) : qstate
@@ -427,26 +432,58 @@ module AlgoGraph
       create_rec new_set new_starts
     in
     create_rec g.vertices (empty())
+  
+  predicate is_similar_vertex (n a: vertex)
+  
+  predicate is_similar_edge (e f: edge)
+  
+  (* Predicate to determine if matched vertices in the matching are vertices from the graph *)
+  predicate is_matched_vertices_in (m: matching) (q g: graph) =
+    forall a n: vertex. Matching.mapsto n a m -> vertex_in n q.vertices /\ vertex_in a g.vertices
+  
+  (* Predicate to determine if all vertices in the query graph are matched in m *)
+  predicate is_matched_query_vertices (m: matching) (q: graph) =
+    forall n: vertex. vertex_in n q.vertices -> Matching.mem n m
+  
+  (* Predicate to determine if the matching is bijective *)
+  predicate is_bijective (m: matching) =
+    forall a a' n n': vertex. Matching.mapsto n a m /\ Matching.mapsto n' a' m
+    -> (a = a' /\ n = n') \/ (a <> a' /\ n <> n')
+  
+  (* Predicate to determine if in a matching, two matched vertices are similar *)
+  predicate is_matched_vertices_similar (m: matching) =
+    forall a n: vertex. Matching.mapsto n a m -> is_similar_vertex n a
+  
+  (* Predicate to determine if all edges in the query graph are matched in m *)
+  predicate is_matched_query_edges (m: matching) (q g: graph) =
+    forall e: edge. Edge.mem e q.edges
+    -> has_edge_graph (find (get_edge_pred e) m) (find (get_edge_succ e) m) g
+  
+  (* Predicate to determine if in a matching, two matched edges are similar *)
+  predicate is_matched_edges_similar (m: matching) (q g: graph) =
+    forall e: edge. Edge.mem e q.edges
+    -> let e' = find_edge (find (get_edge_pred e) m) (find (get_edge_succ e) m) g in
+    is_similar_edge e e'
     
+  (* Predicate to determine if a matching is a valid subgraph isomorphism *)
+  predicate is_valid_matching (m: matching) (q g: graph) =
+    is_matched_vertices_in m q g
+    /\ is_matched_query_vertices m q
+    /\ is_bijective m
+    /\ is_matched_vertices_similar m
+    /\ is_matched_query_edges m q g
+    /\ is_matched_edges_similar m q g
+  
+  (* Predicate to determine if all matching in a set are valid *)
+  predicate is_valid_result (r: set) (q g: graph) =
+    forall m: matching. mem m r -> is_valid_matching m q g
+  
+  (* Predicate to determine if all valid matching are in the result set *)
+  predicate is_all_valid_result (r: set) (q g: graph) =
+    forall m: matching. is_valid_matching m q g -> mem m r
     
   (* THE ALMIGHTY ALGORITM *)
   let find_matched_pattern (q g: graph) : set
-  (*
-  (* Vertices in the matching are vertices of the graphs *)
-  ensures {forall a n: vertex. forall m: matching. Matching.mem m result /\ Matching.mapsto n a m -> Vertex.mem n q.vertices /\ Vertex.mem a g.vertices}
-  (* All vertices in the query graph are matched *)
-  ensures {forall n: vertex. forall m: matching. Matching.mem m result /\ Vertex.mem n q.vertices -> Matching.mem n m}
-  (* The matching is bijective *)
-  ensures {forall a a' n n': vertex. Matching.mapsto n a /\ Matching.mapsto n' a' -> (a = a' /\ n = n') \/ (a <> a' /\ n <> n')}
-  (* Two matched vertices are similar *)
-  ensures {forall a n: vertex. Matching.mapsto n a result -> is_similar_vertex n a}
-  (* All edges in the query graph are matched in the data graph *)
-  ensures {forall e: edge. Edge.mem e q.edges
-          -> has_edge_graph (find (get_edge_pred e) result) (find (get_edge_succ e) result) g}
-  (* Matched edges are similar *)
-  ensures {forall e: edge. Edge.mem e q.edges
-          -> let e' = find_edge (find (get_edge_pred e) result) (find (get_edge_succ e) result) g in
-          is_similar_edge e e'} *)
   =
     if is_empty q.vertices then empty()
     else let all_starts = create_all_starts q g in
