@@ -167,6 +167,13 @@ module Graph
     forall g: graph. forall u v: vertex.
     vertex_in u g.vertices -> (has_edge_graph u v g <-> has_edge_set u v g.edges)
   
+  (* Predicate to determine if two vertices are linked by an edge in a graph *)
+  predicate connected (u v: vertex) (g: graph) =
+    has_edge_graph u v g \/ has_edge_graph v u g
+    
+  lemma connected_symmetry:
+    forall u v: vertex. forall g: graph. connected u v g <-> connected v u g
+  
   (* Function to get an edge from the two nodes at its extremities *)
   let function find_edge (u v: vertex) (g: graph) : edge
   requires {vertex_in u g.vertices}
@@ -255,14 +262,80 @@ module Graph
     let s = Vertex.remove x g.vertices in
     compare_optimum x s
       
+end
+
+
+module Path
+
+  use Vertex
+  use Edge
+  use Graph
+  
+  use int.Int
+  use seq.Seq
+  
+  (* Predicate to determine if two vertices are connected in a graph with a sequence of vertices s *)
+  predicate has_path (v1: vertex) (s: seq vertex) (v2: vertex) (g: graph) =
+    if length s = 0 then v1 = v2 /\ vertex_in v1 g.vertices
+    else connected v1 s[0] g /\ s[length s - 1] = v2 /\
+    (forall i. 0 <= i < length s-1 -> connected s[i] s[i+1] g)
+  
+  (* Predicate to determine if two vertices are connected in a graph *)
+  predicate reachable (v1 v2: vertex) (g: graph) =
+    exists s. has_path v1 s v2 g
+  
+  (* A vertex has a path to itself *)
+  lemma has_path_itself:
+    forall g: graph. forall v: vertex. vertex_in v g.vertices -> has_path v empty v g
+  
+  (* Reflexivity of relation reachable *)
+  lemma reachable_reflexivity:
+    forall g: graph. forall v: vertex. vertex_in v g.vertices -> reachable v v g
+    
+  lemma equiv_seq_sym:
+    forall s1 s2: seq vertex. length s1 = length s2 ->
+    ((forall i. 0 <= i < length s1 - 1 -> s1[i] = s2[length s1 - 2 - i])
+    <-> (forall i. 0 <= i < length s1 - 1 -> s2[i] = s1[length s1 - 2 - i]))
+    
+  lemma has_path_symmetry:
+    forall g: graph. forall v1 v2: vertex. forall s1 s2: seq vertex.
+    length s1 = length s2 /\(forall i. 0 <= i < length s1 - 1 -> s1[i] = s2[length s1 - 2 - i])
+    /\ s1[length s1 - 1] = v2 /\ s2[length s1 -1] = v1
+    -> has_path v1 s1 v2 g <-> has_path v2 s2 v1 g
+    
+  lemma test:
+    forall g: graph. forall v1 v2: vertex. exists s. has_path v1 s v2 g -> exists s2. has_path v2 s2 v1 g
+  
+  lemma test2:
+    forall g: graph. forall v1 v2: vertex.
+    reachable v1 v2 g -> exists s. has_path v1 s v2 g
+    
+  lemma test3:
+    forall g: graph. forall v1 v2: vertex. vertex_in v1 g.vertices /\ v1 = v2 -> has_path v1 empty v2 g
+    
+    
+  (* Symmetry of relation reachable *)
+  lemma reachable_symmetry:
+    forall g: graph. forall v1 v2: vertex. reachable v1 v2 g -> reachable v2 v1 g
+  
+  (* Transitivity of relation reachable *)
+  lemma reachable_transitivity:
+    forall g: graph. forall v1 v2 v3: vertex. reachable v1 v2 g /\ reachable v2 v3 g
+    -> reachable v1 v3 g
+    
+  predicate linked_graph (g: graph) =
+    forall v1 v2: vertex. vertex_in v1 g.vertices /\ vertex_in v2 g.vertices
+    -> reachable v1 v2 g
   
 end
+
     
 module Matching
 
   use Vertex
   use Edge
   use Graph
+  use Path
 
   (* In order to build result *)
   clone export fmap.MapApp with type key = vertex
@@ -283,6 +356,7 @@ module States
   use Vertex
   use Edge
   use Graph
+  use Path
   use Matching
   
   (* State to register the step in the algorithm on the query graph *)
@@ -330,6 +404,11 @@ module States
      a_seen_pred = Vertex.empty();
      a_next = Vertex.empty();}
      
+  let function get_matching_peers (g_state: gstate)
+  ensures {result = g_state.matching_peers}
+  =
+    g_state.matching_peers
+     
   (* Function to add a peering in the g_state, and make the needed modification *)
   let function add_peering_g (g: graph) (n a: vertex) (s: gstate) : gstate
   requires {vertex_in a g.vertices}
@@ -342,7 +421,7 @@ module States
   ensures  {result.a_next = Vertex.union (successors a g) (predecessors a g)}
   =
     let new_a_seen = Vertex.add a s.a_seen in
-    let new_matching_peers = Matching.add n a s.matching_peers in
+    let ghost new_matching_peers = Matching.add n a s.matching_peers in
     let _ = assert {forall a1. vertex_in a1 new_a_seen
                     -> (vertex_in a1 s.a_seen /\ exists n1. Matching.mapsto n1 a1 (Matching.add n a s.matching_peers))
                     \/ (a1 = a /\ Matching.mapsto n a1 (Matching.add n a s.matching_peers))} in
@@ -369,6 +448,10 @@ module States
   
   type gstates = set
   
+  (* Predicate to determine uniqueness of matching_peers in the set of gstates *)
+  predicate matching_peers_uniqueness (g_states: gstates) =
+    forall g1 g2. mem g1 g_states /\ mem g2 g_states -> g1 = g2 \/ g1.matching_peers <> g2.matching_peers
+  
 end
 
 module AlgoGraph
@@ -376,6 +459,7 @@ module AlgoGraph
   use Vertex
   use Edge
   use Graph
+  use Path
   use Matching
   use States
   
@@ -393,7 +477,7 @@ module AlgoGraph
   let function is_compatible_edge (q g: graph) (l b: edge) : bool
     requires {edge_in b q.edges}
     requires {edge_in l g.edges}
-    ensures  {true}
+    ensures  {result = true}
   =
     true
   
@@ -415,7 +499,7 @@ module AlgoGraph
       
   (* Function to create the set all_starts in the main algorithm *)
   let function create_all_starts (q g: graph) (opt: vertex) : set
-  requires {not Vertex.is_empty q.vertices}
+  requires {vertex_in opt q.vertices}
   ensures  {is_complete_compatible_matching result q g opt}
   =
     let rec create_rec (vertices: Vertex.set) (partial_starts: set) : set
@@ -434,11 +518,17 @@ module AlgoGraph
     create_rec g.vertices (empty())
   
   (* Function to create the initial set of states in the graph g *)
-  let function create_g_states (q g: graph) (opt: vertex): gstates
+  let function create_g_states (q g: graph) (opt: vertex) : States.set
+  requires {vertex_in opt q.vertices}
+  ensures  {States.cardinal result = cardinal (create_all_starts q g opt)}
+  ensures  {matching_peers_uniqueness result}
+  ensures  {forall g_state. States.mem g_state result -> mem g_state.matching_peers (create_all_starts q g opt)}
   =
     let all_starts = create_all_starts q g opt in
     let rec create_rec (partial_gs: gstates) (s: set) : gstates
-    variant {cardinal s}
+    variant  {cardinal s}
+    ensures  {States.cardinal result = cardinal all_starts}
+    ensures  {matching_peers_uniqueness result}
     =
       if is_empty s then partial_gs
       else let m = choose s in
@@ -451,6 +541,9 @@ module AlgoGraph
   
   (* Function to remove n in the two adjacent sets of a qstate *)
   let function q_remove_adj (n: vertex) (q_state: qstate) : qstate
+  ensures {result.n_seen_succ = Vertex.remove n q_state.n_seen_succ}
+  ensures {result.n_seen_pred = Vertex.remove n q_state.n_seen_pred}
+  ensures {result.n_seen = q_state.n_seen}
   =
     {q_state with n_seen_succ = Vertex.remove n q_state.n_seen_succ;
                   n_seen_pred = Vertex.remove n q_state.n_seen_pred;
@@ -458,16 +551,51 @@ module AlgoGraph
   
   (* Function to remove a in the two adjacent sets of a gstate *)
   let function g_remove_adj (a: vertex) (g_state: gstate) : gstate
+  ensures {result.a_seen_succ = Vertex.remove a g_state.a_seen_succ}
+  ensures {result.a_seen_pred = Vertex.remove a g_state.a_seen_pred}
+  ensures {result.a_seen = g_state.a_seen}
+  ensures {result.matching_peers = g_state.matching_peers}
+  ensures {result.a_next = g_state.a_next}
   =
     {g_state with a_seen_succ = Vertex.remove a g_state.a_seen_succ;
                   a_seen_pred = Vertex.remove a g_state.a_seen_pred;
     }
+  
+  (* Predicate to determine if current matchings_done is all the matching peers from the visited gstates *)
+  predicate is_partially_extracted (matchings_done: set) (visited_g_states: States.fset gstate) =
+    matchings_done = States.map get_matching_peers visited_g_states
+  
+  (* Predicate to determine if matchings_done is all the matching peers from gstates *)
+  predicate is_totally_extracted (g_states: gstates) (matchings_done: set) =
+    is_partially_extracted matchings_done g_states
+  
+  (* Function to extract all the matching peers from a set of gstates *)
+  let function extract_matchings (g_states: gstates) : set
+  requires {matching_peers_uniqueness g_states}
+  ensures  {is_totally_extracted g_states result}
+  =
+    let rec partial_extract (matchings_done: set) (to_do: gstates)
+    variant  {States.cardinal to_do}
+    requires {States.subset to_do g_states}
+    requires {is_partially_extracted matchings_done (States.diff g_states to_do)}
+    ensures  {is_totally_extracted g_states result}
+    =
+      if States.is_empty to_do then matchings_done
+      else let gs = States.choose to_do in
+      let new_to_do = States.remove gs to_do in
+      let new_matchings_done = add gs.matching_peers matchings_done in
+      let _ = assert {forall m. mem m new_matchings_done -> mem m matchings_done \/ m = gs.matching_peers} in
+      partial_extract new_matchings_done new_to_do
+    in
+    partial_extract (empty()) g_states
     
   (* Predicate to determine if two vertices are similar *)
-  predicate is_similar_vertex (n a: vertex)
+  predicate is_similar_vertex (n a: vertex) =
+    a = a /\ n = n /\ true
   
   (* Predicate to determine if two edges are similar *)
-  predicate is_similar_edge (e f: edge)
+  predicate is_similar_edge (e f: edge) =
+    e = e /\ f = f /\ true
   
   (* Predicate to determine if matched vertices in the matching are vertices from the graph *)
   predicate is_matched_vertices_in (m: matching) (q g: graph) =
@@ -514,10 +642,17 @@ module AlgoGraph
   predicate is_all_valid_result (r: set) (q g: graph) =
     forall m: matching. is_valid_matching m q g -> mem m r
     
+  (* Filters *)
+  
+  let predicate is_valid (q_state: qstate) (g_state: gstate) (n a: vertex) : bool
+  =
+    true (* Temporarly *)
   
   (* THE ALMIGHTY ALGORITHM *)
   
+  (* Function that build from a gstate all the gstates one step further in the algorithm *)
   let add_new_g_states (q g: graph) (q_state: qstate) (n: vertex) (g_state: gstate) (to_return: States.set) : States.set
+  requires {linked_graph q}
   =
     let rec partial_add (a_to_try: Vertex.set) (acc: States.set) : States.set
     variant {Vertex.cardinal a_to_try}
@@ -527,8 +662,8 @@ module AlgoGraph
       let new_a_to_try = Vertex.remove a a_to_try in
       if not (is_compatible_vertex q g n a) then partial_add new_a_to_try acc
       else let tmp_g_state = g_remove_adj a g_state in
-      if not (is_valid tmp_g_state q_state n a) then partial_add new_a_to_try acc
-      else let new_g_state = add_peering_g n a tmp_g_state in
+      if not (is_valid q_state tmp_g_state n a) then partial_add new_a_to_try acc
+      else let new_g_state = add_peering_g g n a tmp_g_state in
       let new_acc = States.add new_g_state acc in
       partial_add new_a_to_try new_acc
     in
@@ -536,6 +671,7 @@ module AlgoGraph
   
   (* Function that scans all to_check states in order to add in to_return new gstates one step further in the algorithm *)
   let rec forall_g_states (q g: graph) (q_state: qstate) (n: vertex) (to_check: States.set) (to_return: States.set) : States.set
+  requires {linked_graph q}
   variant {States.cardinal to_check}
   =
     if States.is_empty to_check then to_return
@@ -544,7 +680,9 @@ module AlgoGraph
     let new_to_return = add_new_g_states q g q_state n g_state to_return in
     forall_g_states q g q_state n new_to_check new_to_return
   
+  (* The recurrence of the main algorithm *)
   let rec partial_match (q g: graph) (q_state: qstate) (g_states: States.set) (n_next: Vertex.set) : (qstate, gstates)
+  requires {linked_graph q}
   variant {(Vertex.cardinal q.vertices) - (Vertex.cardinal q_state.n_seen)}
   =
     if States.is_empty g_states || is_empty n_next then (q_state, g_states)
@@ -553,18 +691,23 @@ module AlgoGraph
     if vertex_in n q_state.n_seen then partial_match q g q_state g_states new_n_next
     else let upd_q_state = q_remove_adj n q_state in
     let new_g_states = forall_g_states q g upd_q_state n g_states (States.empty()) in
-    let new_q_state = add_peering_q n upd_q_state in
+    let new_q_state = add_peering_q q n upd_q_state in
     let dfs_n_next = Vertex.union (successors n q) (predecessors n q) in
     let (dfs_q_state, dfs_g_states) = partial_match q g new_q_state new_g_states dfs_n_next in
     partial_match q g dfs_q_state dfs_g_states new_n_next
-    
   
+  (* The main algorithm *)
   let find_matched_pattern (q g: graph) : set
+  requires {linked_graph q}
+  ensures  {is_valid_result result q g}
+  ensures  {is_all_valid_result result q g}
   =
     if is_empty q.vertices then empty()
     else let opt = optimum_vertex q in
     let g_states = create_g_states q g opt in
     let q_state = add_peering_q q opt (empty_qstate()) in
-    empty()
+    let n_next = Vertex.union q_state.n_seen_succ q_state.n_seen_pred in
+    let (end_q_state, end_g_states) = partial_match q g q_state g_states n_next in
+    extract_matchings g_states
 
 end
