@@ -59,7 +59,7 @@ module Edge
   =
     (vertex_eq (get_edge_pred e) u) && (vertex_eq (get_edge_succ e) v)
     
-  (* Predicate to determine if two vertices has at least one different extremity *)
+  (* Predicate to determine if two edges has at least one different extremity *)
   predicate distinct_extremities (e f: edge) =
     not get_edge_pred e = get_edge_pred f \/ not get_edge_succ e = get_edge_succ f
   
@@ -117,8 +117,13 @@ module Graph
   predicate edge_means_link (s: Edge.set) (m: linked) =
     forall e: edge. (Edge.mem e s -> find_vertex (get_edge_pred e) (get_edge_succ e) m)
   
+  (* Predicate to determine if a linked map has all its matching in a set of edges *)
   predicate link_means_edge (m: linked) (s: Edge.set) =
     forall u v: vertex. mem u m /\ find_vertex u v m -> has_edge_set u v s
+    
+  (* Predicate to determine if a set has all his edges with two different extremities *)
+  predicate all_different_extremities (s: Edge.set) =
+    forall e: edge. Edge.mem e s -> get_edge_succ e <> get_edge_pred e
   
   (* The type related to the graph *)
   type graph = {vertices : Vertex.set;
@@ -141,6 +146,8 @@ module Graph
   invariant {edge_means_link edges succs}
   (* If a vertex has a successor, then there is an edge between those two vertices *)
   invariant {link_means_edge succs edges}
+  (* A graph can't have an edge that links a vertex with itself *)
+  invariant {all_different_extremities edges}
   by {vertices = Vertex.empty(); preds = create(); succs = create(); edges = empty()}
   
   (* Function to get all the successors of the vertex in the graph *)
@@ -430,6 +437,24 @@ module States
      a_seen_succ = Vertex.diff (Vertex.union s.a_seen_succ (successors a g)) (new_a_seen);
      a_seen_pred = Vertex.diff (Vertex.union s.a_seen_pred (predecessors a g)) (new_a_seen);
      a_next = Vertex.union (successors a g) (predecessors a g);}
+          
+  (* Function to add the first peering in the g_state, and make the needed modification *)
+  let function create_first_peering_g (g: graph) (opt: vertex) (m: matching): gstate
+  requires {Matching.size m = 1}
+  requires {Matching.mem opt m}
+  requires {vertex_in (Matching.find opt m) g.vertices}
+  ensures  {result.a_seen = Vertex.singleton (Matching.find opt m)}
+  ensures  {result.matching_peers = m}
+  ensures  {result.a_seen_succ = successors (Matching.find opt m) g}
+  ensures  {result.a_seen_pred = predecessors (Matching.find opt m) g}
+  ensures  {result.a_next = Vertex.union (successors (Matching.find opt m) g) (predecessors (Matching.find opt m) g)}
+  =
+    let a = Matching.find opt m in
+    {matching_peers = m;
+     a_seen = Vertex.singleton a;
+     a_seen_succ = successors a g;
+     a_seen_pred = predecessors a g;
+     a_next = Vertex.union (successors a g) (predecessors a g);}
      
      
   (* Function to add the vertex n in the q_state, and make the needed modification *)
@@ -485,7 +510,7 @@ module AlgoGraph
   let function start_matching (q g: graph) (n a: vertex) : matching
     requires {vertex_in a g.vertices}
     requires {vertex_in n q.vertices}
-    ensures  {Matching.(==) result (Matching.add n a Matching.empty)}
+    ensures  {result = (Matching.add n a Matching.empty)}
   =
     Matching.add n a (create ())
   
@@ -516,24 +541,31 @@ module AlgoGraph
       create_rec new_set new_starts
     in
     create_rec g.vertices (empty())
+    
+  (* Predicate to determine if gstates in gs are states built with only opt in matching_peers domain *)
+  predicate is_singletons_gstate (gs: gstates) (g: graph) (opt: vertex) (s: fset matching) =
+    gs = map (create_first_peering_g g opt) s
   
   (* Function to create the initial set of states in the graph g *)
-  let function create_g_states (q g: graph) (opt: vertex) : States.set
+  let function create_g_states (q g: graph) (opt: vertex) (all_starts: set) : States.set
   requires {vertex_in opt q.vertices}
-  ensures  {States.cardinal result = cardinal (create_all_starts q g opt)}
+  requires {all_starts = create_all_starts q g opt}
   ensures  {matching_peers_uniqueness result}
-  ensures  {forall g_state. States.mem g_state result -> mem g_state.matching_peers (create_all_starts q g opt)}
+  ensures  {is_singletons_gstate result g opt all_starts}
   =
-    let all_starts = create_all_starts q g opt in
     let rec create_rec (partial_gs: gstates) (s: set) : gstates
     variant  {cardinal s}
-    ensures  {States.cardinal result = cardinal all_starts}
+    requires {subset s all_starts}
+    requires {forall gst. States.mem gst partial_gs -> mem gst.matching_peers (diff all_starts s)}
+    requires {matching_peers_uniqueness partial_gs}
+    requires {is_singletons_gstate partial_gs g opt (diff all_starts s)}
+    ensures  {is_singletons_gstate result g opt all_starts}
     ensures  {matching_peers_uniqueness result}
     =
       if is_empty s then partial_gs
       else let m = choose s in
       let new_s = remove m s in
-      let g_state = add_peering_g g opt (Matching.find opt m) (empty_gstate ()) in
+      let g_state = create_first_peering_g g opt m in
       let new_gs = States.add g_state partial_gs in
       create_rec new_gs new_s
     in
@@ -704,7 +736,8 @@ module AlgoGraph
   =
     if is_empty q.vertices then empty()
     else let opt = optimum_vertex q in
-    let g_states = create_g_states q g opt in
+    let all_starts = create_all_starts q g opt in
+    let g_states = create_g_states q g opt all_starts in
     let q_state = add_peering_q q opt (empty_qstate()) in
     let n_next = Vertex.union q_state.n_seen_succ q_state.n_seen_pred in
     let (end_q_state, end_g_states) = partial_match q g q_state g_states n_next in
