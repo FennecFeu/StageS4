@@ -98,8 +98,8 @@ module Graph
     forall v. vertex_in v s <-> mem v m
     
   (* Predicate to say the values of the map are included in the set s *)
-  predicate values_subset_of (m: linked) (s: Vertex.set) =
-    forall v. mem v m -> subset (find v m) s
+  predicate values_strict_subset_of (m: linked) (s: Vertex.set) =
+    forall v. mem v m -> subset (find v m) s /\cardinal (find v m) < cardinal s
   
   (* Predicate to say that two maps acts like a mirror for two vertices *)
   predicate mirror_between_maps_two_vertices (v w: vertex) (m1 m2: linked) =
@@ -135,9 +135,9 @@ module Graph
   (* All vertices are keys in succs *)
   invariant {vertices_is_domain vertices succs}
   (* Predecessors are vertices *)
-  invariant {values_subset_of preds vertices}
+  invariant {values_strict_subset_of preds vertices}
   (* Successors are vertices *)
-  invariant {values_subset_of succs vertices}
+  invariant {values_strict_subset_of succs vertices}
   (* Relation between predecessors and successors *)
   invariant {mirror_between_maps preds succs}
   (* A graph can't have two edges with same extremities *)
@@ -163,6 +163,14 @@ module Graph
   ensures  {result = find v g.preds}
   =
     find v g.preds
+  
+  lemma not_edging_itself:
+    forall g: graph. forall v: vertex. vertex_in v g.vertices
+    -> not vertex_in v (successors v g) /\ not vertex_in v (predecessors v g)
+    
+  lemma adj_subset_of_vertices:
+    forall g: graph. forall v: vertex. vertex_in v g.vertices
+    -> subset (union (predecessors v g) (successors v g)) g.vertices
     
   let predicate has_edge_graph (u v: vertex) (g: graph) : bool
   requires {vertex_in u g.vertices}
@@ -356,6 +364,9 @@ module Matching
   predicate is_range (s: Vertex.set) (m: matching) =
     forall a: vertex. vertex_in a s <-> is_value_in a m
   
+  predicate is_injective (m: matching) =
+    forall n n' a a'. mapsto n a m /\ mapsto n' a' m -> (a <> a' \/ n = n')
+  
 end
 
 module States
@@ -395,6 +406,7 @@ module States
   invariant {is_range a_seen matching_peers}
   invariant {disjoint_vertices a_seen a_seen_succ}
   invariant {disjoint_vertices a_seen a_seen_pred}
+  invariant {is_injective matching_peers}
   by {matching_peers = create(); a_seen = Vertex.empty(); a_seen_pred = Vertex.empty(); a_seen_succ = Vertex.empty(); a_next = Vertex.empty()}
   
   (* Function to create an empty gstate *)
@@ -416,16 +428,31 @@ module States
   =
     g_state.matching_peers
      
+  (* Predicate to determine if a qstate is correctly relative to the graph q *)
+  predicate is_q_relative (q_state: qstate) (q: graph) =
+    Vertex.subset q_state.n_seen q.vertices
+    /\ Vertex.subset q_state.n_seen_succ q.vertices
+    /\ Vertex.subset q_state.n_seen_pred q.vertices
+  
+  (* Predicate to determine if a gstate is correctly relative to the graph g *)
+  predicate is_g_relative (g_state: gstate) (g: graph) =
+    Vertex.subset g_state.a_seen g.vertices
+    /\ Vertex.subset g_state.a_seen_succ g.vertices
+    /\ Vertex.subset g_state.a_seen_pred g.vertices
+    /\ Vertex.subset g_state.a_next g.vertices
+     
   (* Function to add a peering in the g_state, and make the needed modification *)
   let function add_peering_g (g: graph) (n a: vertex) (s: gstate) : gstate
   requires {vertex_in a g.vertices}
   requires {not Matching.mem n s.matching_peers}
   requires {forall n. not Matching.mapsto n a s.matching_peers}
+  requires {is_g_relative s g}
   ensures  {result.a_seen = Vertex.add a s.a_seen}
   ensures  {result.matching_peers = Matching.add n a s.matching_peers}
   ensures  {is_union_vertices_without result.a_seen_succ s.a_seen_succ (successors a g) result.a_seen}
   ensures  {is_union_vertices_without result.a_seen_pred s.a_seen_pred (predecessors a g) result.a_seen}
   ensures  {result.a_next = Vertex.union (successors a g) (predecessors a g)}
+  ensures  {is_g_relative result g}
   =
     let new_a_seen = Vertex.add a s.a_seen in
     let ghost new_matching_peers = Matching.add n a s.matching_peers in
@@ -448,6 +475,7 @@ module States
   ensures  {result.a_seen_succ = successors (Matching.find opt m) g}
   ensures  {result.a_seen_pred = predecessors (Matching.find opt m) g}
   ensures  {result.a_next = Vertex.union (successors (Matching.find opt m) g) (predecessors (Matching.find opt m) g)}
+  ensures  {is_g_relative result g}
   =
     let a = Matching.find opt m in
     {matching_peers = m;
@@ -460,14 +488,20 @@ module States
   (* Function to add the vertex n in the q_state, and make the needed modification *)
   let function add_peering_q (q: graph) (n: vertex) (s: qstate) : qstate
   requires {vertex_in n q.vertices}
+  requires {is_q_relative s q}
   ensures  {result.n_seen = Vertex.add n s.n_seen}
   ensures  {is_union_vertices_without result.n_seen_succ s.n_seen_succ (successors n q) result.n_seen}
   ensures  {is_union_vertices_without result.n_seen_pred s.n_seen_pred (predecessors n q) result.n_seen}
+  ensures  {is_q_relative result q}
   =
     let new_n_seen = Vertex.add n s.n_seen in
     {n_seen = new_n_seen;
      n_seen_succ = Vertex.diff (Vertex.union s.n_seen_succ (successors n q)) (new_n_seen);
      n_seen_pred = Vertex.diff (Vertex.union s.n_seen_pred (predecessors n q)) (new_n_seen);}
+    
+  (* Predicate to determine if q_state and g_state are coherent *)
+  predicate relative_state (q_state: qstate) (g_state: gstate) =
+    forall n: vertex. vertex_in n q_state.n_seen <-> Matching.mem n g_state.matching_peers
   
   clone export set.SetApp with type elt = gstate
   
@@ -476,6 +510,12 @@ module States
   (* Predicate to determine uniqueness of matching_peers in the set of gstates *)
   predicate matching_peers_uniqueness (g_states: gstates) =
     forall g1 g2. mem g1 g_states /\ mem g2 g_states -> g1 = g2 \/ g1.matching_peers <> g2.matching_peers
+  
+  (* Predicate to determine coherence between states and graphs *)
+  predicate are_coherent (q g: graph) (q_state: qstate) (g_states: gstates) =
+    is_q_relative q_state q
+    /\ forall g_state. mem g_state g_states
+                       -> relative_state q_state g_state /\ is_g_relative g_state g
   
 end
 
@@ -544,7 +584,7 @@ module AlgoGraph
     
   (* Predicate to determine if gstates in gs are states built with only opt in matching_peers domain *)
   predicate is_singletons_gstate (gs: gstates) (g: graph) (opt: vertex) (s: fset matching) =
-    gs = map (create_first_peering_g g opt) s
+    States.(==) gs (map (create_first_peering_g g opt) s)
   
   (* Function to create the initial set of states in the graph g *)
   let function create_g_states (q g: graph) (opt: vertex) (all_starts: set) : States.set
@@ -552,6 +592,7 @@ module AlgoGraph
   requires {all_starts = create_all_starts q g opt}
   ensures  {matching_peers_uniqueness result}
   ensures  {is_singletons_gstate result g opt all_starts}
+  ensures  {forall g_state. mem g_state result -> is_g_relative g_state g}
   =
     let rec create_rec (partial_gs: gstates) (s: set) : gstates
     variant  {cardinal s}
@@ -559,14 +600,17 @@ module AlgoGraph
     requires {forall gst. States.mem gst partial_gs -> mem gst.matching_peers (diff all_starts s)}
     requires {matching_peers_uniqueness partial_gs}
     requires {is_singletons_gstate partial_gs g opt (diff all_starts s)}
+    requires {forall g_state. mem g_state partial_gs -> is_g_relative g_state g}
     ensures  {is_singletons_gstate result g opt all_starts}
     ensures  {matching_peers_uniqueness result}
+    ensures  {forall g_state. mem g_state result -> is_g_relative g_state g}
     =
       if is_empty s then partial_gs
       else let m = choose s in
       let new_s = remove m s in
       let g_state = create_first_peering_g g opt m in
       let new_gs = States.add g_state partial_gs in
+      let _ = assert {s = add m new_s} in
       create_rec new_gs new_s
     in
     create_rec (States.empty()) all_starts
@@ -595,7 +639,7 @@ module AlgoGraph
   
   (* Predicate to determine if current matchings_done is all the matching peers from the visited gstates *)
   predicate is_partially_extracted (matchings_done: set) (visited_g_states: States.fset gstate) =
-    matchings_done = States.map get_matching_peers visited_g_states
+    matchings_done == States.map get_matching_peers visited_g_states
   
   (* Predicate to determine if matchings_done is all the matching peers from gstates *)
   predicate is_totally_extracted (g_states: gstates) (matchings_done: set) =
@@ -651,20 +695,46 @@ module AlgoGraph
     forall e: edge. Edge.mem e q.edges
     -> has_edge_graph (find (get_edge_pred e) m) (find (get_edge_succ e) m) g
   
+  (* Predicate to determine if all edges made by seen vertices in the query graph are matched in g_state.matching_peers *)
+  predicate is_matched_seen_query_edges (q_state: qstate) (g_state: gstate) (q g: graph) =
+    forall e: edge. Edge.mem e q.edges
+                    /\ vertex_in (get_edge_pred e) q_state.n_seen /\ vertex_in (get_edge_succ e) q_state.n_seen
+    -> has_edge_graph (find (get_edge_pred e) g_state.matching_peers) (find (get_edge_succ e) g_state.matching_peers) g
+  
   (* Predicate to determine if in a matching, two matched edges are similar *)
   predicate is_matched_edges_similar (m: matching) (q g: graph) =
     forall e: edge. Edge.mem e q.edges
     -> let e' = find_edge (find (get_edge_pred e) m) (find (get_edge_succ e) m) g in
     is_similar_edge e e'
     
-  (* Predicate to determine if a matching is a valid subgraph isomorphism *)
-  predicate is_valid_matching (m: matching) (q g: graph) =
+  (* Predicate to determine if a matching is partially a valid subgraph isomorphism *)
+  predicate is_partially_valid_matching (m: matching) (q g: graph) =
     is_matched_vertices_in m q g
-    /\ is_matched_query_vertices m q
     /\ is_bijective m
     /\ is_matched_vertices_similar m
+    
+  (* Predicate to determine if a matching is a valid subgraph isomorphism *)
+  predicate is_valid_matching (m: matching) (q g: graph) =
+    is_partially_valid_matching m q g
+    /\ is_matched_query_vertices m q
     /\ is_matched_query_edges m q g
     /\ is_matched_edges_similar m q g
+    
+  (* Predicate to determine if a matching from a gstate is partially a valid subgraph isomorphism *)
+  predicate is_partially_valid_gstate (g_state: gstate) (q g: graph) =
+    is_partially_valid_matching g_state.matching_peers q g
+    
+  (* Predicate to determine if all matchings from a gstate is partially a valid subgraph isomorphism *)
+  predicate is_partially_valid_gstates (g_states: gstates) (q g: graph) =
+    forall g_state. mem g_state g_states -> is_partially_valid_gstate g_state q g
+  
+  (* Predicate to determine if a matching from a gstate is a valid subgraph isomorphism *)
+  predicate is_valid_gstate (g_state: gstate) (q g: graph) =
+    is_valid_matching g_state.matching_peers q g
+  
+  (* Predicate to determine if all matchings from a set of gstates is a valid subgraph isomorphism *)
+  predicate is_valid_gstates (g_states: gstates) (q g: graph) =
+    forall g_state. mem g_state g_states -> is_valid_gstate g_state q g
   
   (* Predicate to determine if all matching in a set are valid *)
   predicate is_valid_result (r: set) (q g: graph) =
@@ -685,14 +755,29 @@ module AlgoGraph
   (* Function that build from a gstate all the gstates one step further in the algorithm *)
   let add_new_g_states (q g: graph) (q_state: qstate) (n: vertex) (g_state: gstate) (to_return: States.set) : States.set
   requires {linked_graph q}
+  requires {vertex_in n q.vertices}
+  requires {not vertex_in n q_state.n_seen}
+  requires {is_q_relative q_state q}
+  requires {is_g_relative g_state g}
+  requires {relative_state q_state g_state}
+  requires {forall g_state. mem g_state to_return -> is_g_relative g_state g}
+  requires {is_partially_valid_gstate g_state q g}
+  requires {is_partially_valid_gstates to_return q g}
+  ensures  {forall g_state. mem g_state result -> is_g_relative g_state g}
+  ensures  {is_partially_valid_gstates result q g}
   =
     let rec partial_add (a_to_try: Vertex.set) (acc: States.set) : States.set
-    variant {Vertex.cardinal a_to_try}
+    requires {Vertex.subset a_to_try g.vertices}
+    requires {forall g_state. mem g_state acc -> is_g_relative g_state g}
+    requires {is_partially_valid_gstates acc q g}
+    variant  {Vertex.cardinal a_to_try}
+    ensures  {forall g_state. mem g_state result -> is_g_relative g_state g}
+    ensures  {is_partially_valid_gstates result q g}
     =
       if Vertex.is_empty a_to_try then acc
       else let a = Vertex.choose a_to_try in
       let new_a_to_try = Vertex.remove a a_to_try in
-      if not (is_compatible_vertex q g n a) then partial_add new_a_to_try acc
+      if not (is_compatible_vertex q g n a) || vertex_in a g_state.a_seen then partial_add new_a_to_try acc
       else let tmp_g_state = g_remove_adj a g_state in
       if not (is_valid q_state tmp_g_state n a) then partial_add new_a_to_try acc
       else let new_g_state = add_peering_g g n a tmp_g_state in
@@ -704,7 +789,15 @@ module AlgoGraph
   (* Function that scans all to_check states in order to add in to_return new gstates one step further in the algorithm *)
   let rec forall_g_states (q g: graph) (q_state: qstate) (n: vertex) (to_check: States.set) (to_return: States.set) : States.set
   requires {linked_graph q}
+  requires {vertex_in n q.vertices}
+  requires {not vertex_in n q_state.n_seen}
+  requires {are_coherent q g q_state to_check}
+  requires {forall g_state. mem g_state to_return -> is_g_relative g_state g}
+  requires {is_partially_valid_gstates to_check q g}
+  requires {is_partially_valid_gstates to_return q g}
   variant {States.cardinal to_check}
+  ensures {forall g_state. mem g_state result -> is_g_relative g_state g}
+  ensures {is_partially_valid_gstates result q g}
   =
     if States.is_empty to_check then to_return
     else let g_state = States.choose to_check in
@@ -715,17 +808,32 @@ module AlgoGraph
   (* The recurrence of the main algorithm *)
   let rec partial_match (q g: graph) (q_state: qstate) (g_states: States.set) (n_next: Vertex.set) : (qstate, gstates)
   requires {linked_graph q}
-  variant {(Vertex.cardinal q.vertices) - (Vertex.cardinal q_state.n_seen)}
+  requires {disjoint_vertices q_state.n_seen n_next}
+  requires {are_coherent q g q_state g_states}
+  requires {Vertex.cardinal q_state.n_seen <= Vertex.cardinal q.vertices}
+  requires {Vertex.subset n_next q.vertices}
+  requires {is_partially_valid_gstates g_states q g}
+  variant  {let nb_v = Vertex.cardinal q.vertices in
+            nb_v * (nb_v - (Vertex.cardinal q_state.n_seen)) + Vertex.cardinal n_next}
+  ensures  {let (a, b) = result in are_coherent q g a b}
+  ensures  {let (_, gs) = result in is_partially_valid_gstates gs q g}
+  ensures  {let (qs, _) = result in Vertex.subset q_state.n_seen qs.n_seen}
   =
     if States.is_empty g_states || is_empty n_next then (q_state, g_states)
     else let n = Vertex.choose n_next in
-    let new_n_next = Vertex.remove n n_next in
-    if vertex_in n q_state.n_seen then partial_match q g q_state g_states new_n_next
-    else let upd_q_state = q_remove_adj n q_state in
+    let upd_q_state = q_remove_adj n q_state in
     let new_g_states = forall_g_states q g upd_q_state n g_states (States.empty()) in
     let new_q_state = add_peering_q q n upd_q_state in
-    let dfs_n_next = Vertex.union (successors n q) (predecessors n q) in
+    let _ = assert {Vertex.subset q_state.n_seen new_q_state.n_seen} in
+    let dfs_n_next = Vertex.diff (Vertex.union (successors n q) (predecessors n q)) new_q_state.n_seen in
+    let _ = assert {Vertex.cardinal dfs_n_next <= Vertex.cardinal q.vertices} in
     let (dfs_q_state, dfs_g_states) = partial_match q g new_q_state new_g_states dfs_n_next in
+    let new_n_next = Vertex.diff n_next dfs_q_state.n_seen in
+    let _ = assert {Vertex.cardinal new_n_next < Vertex.cardinal n_next} in
+    let _ = assert {- (Vertex.cardinal q_state.n_seen) >= - (Vertex.cardinal dfs_q_state.n_seen)} in
+    let _ = assert {Vertex.cardinal q.vertices >= 0} in
+    let _ = assert {let nb_v = Vertex.cardinal q.vertices in
+                    nb_v * (nb_v - (Vertex.cardinal dfs_q_state.n_seen)) <= nb_v * (nb_v - (Vertex.cardinal q_state.n_seen))} in
     partial_match q g dfs_q_state dfs_g_states new_n_next
   
   (* The main algorithm *)
