@@ -808,6 +808,7 @@ module AlgoGraph
   (* The recurrence of the main algorithm *)
   let rec partial_match (q g: graph) (q_state: qstate) (g_states: States.set) (n_next: Vertex.set) : (qstate, gstates)
   requires {linked_graph q}
+  requires {let nb_v = Vertex.cardinal q.vertices in nb_v * nb_v < 10000}
   requires {disjoint_vertices q_state.n_seen n_next}
   requires {are_coherent q g q_state g_states}
   requires {Vertex.cardinal q_state.n_seen <= Vertex.cardinal q.vertices}
@@ -824,14 +825,17 @@ module AlgoGraph
     let upd_q_state = q_remove_adj n q_state in
     let new_g_states = forall_g_states q g upd_q_state n g_states (States.empty()) in
     let new_q_state = add_peering_q q n upd_q_state in
+    let _ = assert {forall v: vertex. vertex_in v new_q_state.n_seen <-> vertex_in v q_state.n_seen \/ v = n} in
+    let _ = assert {forall v: vertex. forall gst gst2: gstate. States.mem gst new_g_states /\ States.mem gst2 g_states
+                    -> ((Matching.mem v gst.matching_peers) <-> (Matching.mem v gst2.matching_peers \/ v = n))} in
     let _ = assert {Vertex.subset q_state.n_seen new_q_state.n_seen} in
     let dfs_n_next = Vertex.diff (Vertex.union (successors n q) (predecessors n q)) new_q_state.n_seen in
+    let _ = assert {Vertex.subset dfs_n_next q.vertices} in
     let _ = assert {Vertex.cardinal dfs_n_next <= Vertex.cardinal q.vertices} in
     let (dfs_q_state, dfs_g_states) = partial_match q g new_q_state new_g_states dfs_n_next in
     let new_n_next = Vertex.diff n_next dfs_q_state.n_seen in
     let _ = assert {Vertex.cardinal new_n_next < Vertex.cardinal n_next} in
-    let _ = assert {- (Vertex.cardinal q_state.n_seen) >= - (Vertex.cardinal dfs_q_state.n_seen)} in
-    let _ = assert {Vertex.cardinal q.vertices >= 0} in
+    let _ = assert {Vertex.cardinal q_state.n_seen <= Vertex.cardinal dfs_q_state.n_seen} in
     let _ = assert {let nb_v = Vertex.cardinal q.vertices in
                     nb_v * (nb_v - (Vertex.cardinal dfs_q_state.n_seen)) <= nb_v * (nb_v - (Vertex.cardinal q_state.n_seen))} in
     partial_match q g dfs_q_state dfs_g_states new_n_next
@@ -839,6 +843,7 @@ module AlgoGraph
   (* The main algorithm *)
   let find_matched_pattern (q g: graph) : set
   requires {linked_graph q}
+  requires {let nb_v = Vertex.cardinal q.vertices in nb_v * nb_v < 10000}
   ensures  {is_valid_result result q g}
   ensures  {is_all_valid_result result q g}
   =
@@ -848,7 +853,7 @@ module AlgoGraph
     let g_states = create_g_states q g opt all_starts in
     let q_state = add_peering_q q opt (empty_qstate()) in
     let n_next = Vertex.union q_state.n_seen_succ q_state.n_seen_pred in
-    let (end_q_state, end_g_states) = partial_match q g q_state g_states n_next in
-    extract_matchings g_states
+    let (_, end_g_states) = partial_match q g q_state g_states n_next in
+    extract_matchings end_g_states
 
 end
